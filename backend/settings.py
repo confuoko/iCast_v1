@@ -130,12 +130,4 @@ LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'home'
 LOGOUT_REDIRECT_URL = 'home'
 
-# Redis
-REDIS_URL = config('REDIS_URL', default='redis://:pass@localhost:6379/0')
 
-# RabbitMQ
-RABBITMQ_URL = config('RABBITMQ_URL', default='amqp://rabbitmq:pass@localhost:5672/')
-
-# Celery (для будущего использования)
-CELERY_BROKER_URL = RABBITMQ_URL
-CELERY_RESULT_BACKEND = REDIS_URL
