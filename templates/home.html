@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+
+{% block title %}Главная - iCast{% endblock %}
+
+{% block content %}
+<h2>Добро пожаловать в iCast!</h2>
+
+{% if user.is_authenticated %}
+    <p>Вы успешно авторизованы как <strong>{{ user.username }}</strong>.</p>
+    <p>Теперь вы можете пользоваться всеми возможностями приложения.</p>
+{% else %}
+    <p>Для доступа к функциям приложения, пожалуйста, <a href="{% url 'login' %}">войдите</a> или <a href="{% url 'register' %}">зарегистрируйтесь</a>.</p>
+{% endif %}
+{% endblock %}
