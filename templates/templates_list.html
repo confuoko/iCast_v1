@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Мои шаблоны{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+  <h2>Мои шаблоны</h2>
+
+  {% if templates %}
+    <ul class="list-group mb-3">
+      {% for template in templates %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <span>{{ template.get_template_type_display }} {% if template.questions %}(Есть вопросы){% endif %}</span>
+          <a href="{% url 'template_edit' template.pk %}" class="btn btn-outline-primary btn-sm">
+            Редактировать
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>Пока нет шаблонов.</p>
+  {% endif %}
+
+  <a href="{% url 'template_create' %}" class="btn btn-success">
+    Создать новый шаблон
+  </a>
+</div>
+{% endblock %}

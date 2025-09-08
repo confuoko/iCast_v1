@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+
+{% block title %}Загрузка завершена{% endblock %}
+
+{% block content %}
+  <h2>✅ Видео успешно загружено</h2>
+  <p>Файл <strong>{{ media_task.video_uploaded_title|default:media_task.audio_uploaded_title }}</strong> сохранён и готов к обработке.</p>
+  <p>Выберите шаблон для обработки:</p>
+  <!-- Здесь можно вставить форму выбора шаблона -->
+  <a href="{% url 'main' %}" class="btn btn-secondary mt-3">Загрузить ещё</a>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}{{ view.object|default:"Создать" }} шаблон{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+  <h2>{{ view.object|default:"Создать" }} шаблон</h2>
+
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button class="btn btn-primary" type="submit">Сохранить</button>
+    <a href="{% url 'my_templates' %}" class="btn btn-secondary">Отмена</a>
+  </form>
+</div>
+{% endblock %}

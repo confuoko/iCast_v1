@@ -1,0 +1,25 @@
+version: "3"
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - "../icast_db:/var/lib/postgresql/data"
+
+  rabbitmq:
+    image: rabbitmq:3.10
+    environment:
+      RABBITMQ_DEFAULT_USER: rabbitmq
+      RABBITMQ_DEFAULT_PASS: pass
+    ports:
+      - "5672:5672"
+
+  redis:
+    image: redis:6
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass pass

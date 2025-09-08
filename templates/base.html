@@ -90,6 +90,7 @@
             <div class="nav-links">
                 {% if user.is_authenticated %}
                     <span>Привет, {{ user.username }}!</span>
+                    <a href="{% url 'my_templates' %}">Мои шаблоны</a>
                     <a href="{% url 'logout' %}">Выйти</a>
                 {% else %}
                     <a href="{% url 'login' %}">Войти</a>
