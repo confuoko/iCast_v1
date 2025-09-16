@@ -20,6 +20,35 @@ class Integration(models.Model):
     def __str__(self):
         return f"Интеграция для пользователя {self.user.username}"
 
+
+class Project(models.Model):
+    """
+    Проект, к которому может относиться MediaTask.
+    """
+
+    project_title = models.CharField(
+        max_length=255,
+        verbose_name="Название проекта"
+    )
+    description = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Описание проекта"
+    )
+    integration = models.ForeignKey(
+        Integration,
+        on_delete=models.CASCADE,
+        related_name="projects",
+        verbose_name="Интеграция"
+    )
+
+    def __str__(self):
+        return self.project_title
+
+
+
+
+
 class TemplateTypeChoices(models.TextChoices):
     JTBD = "jtbd", "JTBD"
     SCORE = "score", "Score"
@@ -66,6 +95,14 @@ class CastTemplate(models.Model):
         return f"Шаблон (ID {self.id})"
 
 
+class MediaTaskStatusChoices(models.TextChoices):
+    LOADED = "loaded", "Загружен"
+    TRANSCRIBATION = "transcribation", "Транскрибация выполняется"
+    DATA_EXTRACTION = "data_extraction", "Извлечение данных выполняется"
+    SUCCESS = "success", "Успешно завершено"
+    FAILED = "failed", "Ошибка"
+
+
 class MediaTask(models.Model):
     integration = models.ForeignKey(
             'Integration',
@@ -74,6 +111,20 @@ class MediaTask(models.Model):
             blank=True,
             verbose_name="Интеграция"
         )
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="media_tasks",
+        verbose_name="Проект"
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=MediaTaskStatusChoices.choices,
+        default=MediaTaskStatusChoices.LOADED,
+        verbose_name="Статус задачи",
+    )
     cast_template = models.ForeignKey(
         "CastTemplate",
         on_delete=models.SET_NULL,
@@ -174,13 +225,11 @@ class MediaTask(models.Model):
         null=True,
         help_text="Массив сегментов из Nexara (speaker, start, end, text)."
     )
-
-    audio_duration_seconds = models.FloatField(
+    audio_duration_seconds_nexara = models.FloatField(
         verbose_name="Фактическая длительность аудио (по Nexara)",
         blank=True,
         null=True
     )
-
     # === Ошибки ===
     nexara_error = models.TextField(
         verbose_name="Текст ошибки Nexara",
@@ -188,7 +237,6 @@ class MediaTask(models.Model):
         null=True,
         help_text="Сохраняем ответ об ошибке, если запрос неудачный"
     )
-
     nexara_requested_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name="Когда был отправлен запрос в Nexara"

@@ -122,7 +122,8 @@ class UploadSuccessView(LoginRequiredMixin, UpdateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["cast_templates"] = CastTemplate.objects.all()
+        integration = self.object.integration
+        context["cast_templates"] = CastTemplate.objects.filter(integration=integration)
         return context
 
     def form_valid(self, form):

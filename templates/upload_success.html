@@ -3,48 +3,73 @@
 {% block title %}Загрузка завершена{% endblock %}
 
 {% block content %}
-  <h2>✅ Видео успешно загружено</h2>
-  <p>
-    Файл <strong>{{ media_task.video_uploaded_title|default:media_task.audio_uploaded_title }}</strong>
-    сохранён и готов к обработке.
-  </p>
+  <h3>✅ Файл успешно загружен</h3>
 
-  <p class="mb-3">Выберите шаблон для обработки:</p>
 
-  <form method="post">
+  <p class="mb-3">Выберите сценарий интервью:</p>
+
+  <form method="post" id="template-form">
     {% csrf_token %}
 
-    <div class="row row-cols-1 row-cols-md-2 g-3">
+    <!-- Скрытое поле для выбранного шаблона -->
+    <input type="hidden" name="cast_template" id="cast-template-id" value="{{ media_task.cast_template.id|default:'' }}">
+
+    <div class="d-flex flex-column gap-3">
       {% for template in cast_templates %}
-        <div class="col">
-          <label class="card h-100 p-3 border rounded shadow-sm">
-            <input
-              type="radio"
-              name="cast_template"
-              value="{{ template.id }}"
-              class="form-check-input me-2"
-              {% if media_task.cast_template and media_task.cast_template.id == template.id %}checked{% endif %}
-            >
-            <div class="card-body">
-              <h5 class="card-title mb-1">{{ template.get_template_type_display }}</h5>
-              {% if template.integration %}
-                <p class="text-muted mb-1"><small>Интеграция: {{ template.integration }}</small></p>
-              {% endif %}
-              {% if template.questions %}
-                <p class="small text-secondary mb-0">
-                  Вопросов: {{ template.questions|length }}
-                </p>
-              {% endif %}
-            </div>
-          </label>
+        <div
+          class="card p-3 bg-success-subtle rounded-3 shadow-sm template-option {% if media_task.cast_template and media_task.cast_template.id == template.id %}selected-template{% endif %}"
+          data-template-id="{{ template.id }}"
+          style="cursor: pointer;"
+        >
+          <strong class="h5 mb-0">{{ template.get_template_type_display }}</strong>
         </div>
       {% empty %}
         <p class="text-muted">Пока нет доступных шаблонов</p>
       {% endfor %}
     </div>
 
-    <button type="submit" class="btn btn-primary mt-4">Выбрать и начать обработку</button>
+    <!-- Кнопка: Добавить свой шаблон -->
+    <div class="mt-4">
+      <a href="#" class="btn btn-outline-success w-100 disabled" title="Скоро будет доступно">
+        ➕ Добавить свой шаблон
+      </a>
+    </div>
+
+    <!-- Кнопка: Начать обработку -->
+    <div class="mt-3">
+      <button type="submit" class="btn btn-primary w-100">
+        Начать обработку
+      </button>
+    </div>
   </form>
 
-  <a href="{% url 'main' %}" class="btn btn-secondary mt-3">Загрузить ещё</a>
+  <!-- JS для обработки выбора -->
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const options = document.querySelectorAll(".template-option");
+      const hiddenInput = document.getElementById("cast-template-id");
+
+      options.forEach(option => {
+        option.addEventListener("click", function () {
+          // Сбросить выделение
+          options.forEach(el => el.classList.remove("selected-template"));
+
+          // Выделить выбранный
+          this.classList.add("selected-template");
+
+          // Обновить скрытое поле
+          hiddenInput.value = this.dataset.templateId;
+        });
+      });
+    });
+  </script>
+
+  <!-- Стили для выбранного шаблона -->
+  <style>
+    .template-option.selected-template {
+      border: 2px solid #198754; /* Bootstrap success */
+      box-shadow: 0 0 0 3px rgba(25, 135, 84, 0.25);
+      background-color: #d1e7dd !important; /* чуть насыщеннее */
+    }
+  </style>
 {% endblock %}
