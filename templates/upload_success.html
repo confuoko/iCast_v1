@@ -4,8 +4,47 @@
 
 {% block content %}
   <h2>✅ Видео успешно загружено</h2>
-  <p>Файл <strong>{{ media_task.video_uploaded_title|default:media_task.audio_uploaded_title }}</strong> сохранён и готов к обработке.</p>
-  <p>Выберите шаблон для обработки:</p>
-  <!-- Здесь можно вставить форму выбора шаблона -->
+  <p>
+    Файл <strong>{{ media_task.video_uploaded_title|default:media_task.audio_uploaded_title }}</strong>
+    сохранён и готов к обработке.
+  </p>
+
+  <p class="mb-3">Выберите шаблон для обработки:</p>
+
+  <form method="post">
+    {% csrf_token %}
+
+    <div class="row row-cols-1 row-cols-md-2 g-3">
+      {% for template in cast_templates %}
+        <div class="col">
+          <label class="card h-100 p-3 border rounded shadow-sm">
+            <input
+              type="radio"
+              name="cast_template"
+              value="{{ template.id }}"
+              class="form-check-input me-2"
+              {% if media_task.cast_template and media_task.cast_template.id == template.id %}checked{% endif %}
+            >
+            <div class="card-body">
+              <h5 class="card-title mb-1">{{ template.get_template_type_display }}</h5>
+              {% if template.integration %}
+                <p class="text-muted mb-1"><small>Интеграция: {{ template.integration }}</small></p>
+              {% endif %}
+              {% if template.questions %}
+                <p class="small text-secondary mb-0">
+                  Вопросов: {{ template.questions|length }}
+                </p>
+              {% endif %}
+            </div>
+          </label>
+        </div>
+      {% empty %}
+        <p class="text-muted">Пока нет доступных шаблонов</p>
+      {% endfor %}
+    </div>
+
+    <button type="submit" class="btn btn-primary mt-4">Выбрать и начать обработку</button>
+  </form>
+
   <a href="{% url 'main' %}" class="btn btn-secondary mt-3">Загрузить ещё</a>
 {% endblock %}

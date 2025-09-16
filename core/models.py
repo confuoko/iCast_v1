@@ -43,6 +43,13 @@ class CastTemplate(models.Model):
         blank=True,
         null=True
     )
+    help_text = models.TextField(
+        verbose_name="Полный текст после диаризации",
+        blank=True,
+        null=True,
+        help_text="Описание шаблона."
+    )
+
     questions = models.JSONField(
         null=True,
         blank=True,
@@ -191,6 +198,17 @@ class MediaTask(models.Model):
         null=True,
         verbose_name="Когда Nexara вернула результат"
     )
+    gpt_result = models.JSONField(
+        verbose_name="Результат GPT анализа",
+        null=True,
+        blank=True,
+        help_text="Сохранённый ответ от GPT в формате JSON"
+    )
+    gpt_raw_response = models.TextField(
+        verbose_name="Сырой ответ GPT",
+        null=True,
+        blank=True
+    )
 
 class EventTypeChoices(models.TextChoices):
     VIDEO_UPLOADED_LOCAL = "video_uploaded", "Видео загружено"
@@ -201,6 +219,9 @@ class EventTypeChoices(models.TextChoices):
 
     AUDIO_TRANSCRIBE_STARTED = "audio_transcribe_started", "Транскрибация аудио начата"
     AUDIO_TRANSCRIBATION_READY = "audio_transcribation_ready", "Транскрибация успешно завершена"
+
+    TEMPLATE_SELECTED = "template_selected", "Шаблон выбран"
+    GPT_RESULT_READY = "gpt_result_ready", "Результат GPT готов"
 
     DOCUMENT_CREATED = "document_created", "Документ создан"
     CASE_SYNCED = "case_synced", "Синхронизация дела"

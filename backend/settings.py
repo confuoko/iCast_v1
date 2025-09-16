@@ -170,3 +170,7 @@ ENDPOINT_URL = "https://storage.yandexcloud.net"
 
 # === Константы для Nexara ===
 NEXARA_API_KEY=os.environ.get("NEXARA_API_KEY", "")
+
+# === Константы для YANDEX GPT ===
+YANDEX_OAUTH_TOKEN=os.environ.get("YANDEX_OAUTH_TOKEN", "")
+YANDEX_FOLDER_ID=os.environ.get("YANDEX_FOLDER_ID", "")

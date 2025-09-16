@@ -1,14 +1,18 @@
-# core/tasks.py
+
+
 import os
-import time
+
+import json
+
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 import requests
 from django.utils import timezone
+from yandex_cloud_ml_sdk import YCloudML
 
-from backend.settings import NEXARA_API_KEY
+
 from core.models import OutboxEvent, EventTypeChoices, MediaTask
 
 from backend.celery import app as celery_app
@@ -23,24 +27,133 @@ def handler_task():
     events = OutboxEvent.objects.all()
     print(f"🔍 Найдено OutboxEvent: {events.count()} шт.")
 
-    for event in events:
-        print(f"🔸 Событие: id={event.id}, type={event.event_type}, media_task_id={event.media_task.id}")
-        media_task_id = event.media_task.id
+    # core/tasks.py (фрагмент)
 
-        if event.event_type == EventTypeChoices.AUDIO_WAV_UPLOADED:
-            print(f"Запускаем upload_audio_to_yandex_task для MediaTask #{media_task_id}")
+    @celery_app.task(queue="handler")
+    def handler_task():
+        """
+        Проверяет OutboxEvent и запускает задачи по нужной очереди
+        """
+        print("=== Запуск handler_task ===")
 
-            # Запускаем асинхронную задачу во второй очереди
-            upload_audio_to_yandex_task.delay(media_task_id)
+        # Материализуем queryset, чтобы удаление не ломало итерацию
+        events = list(OutboxEvent.objects.all())
+        print(f"🔍 Найдено OutboxEvent: {len(events)} шт.")
 
-            # Удаляем событие, чтобы оно не обрабатывалось повторно
-            event.delete()
-        elif event.event_type == EventTypeChoices.AUDIO_SEND_TO_YANDEX:
-            print(f"Запускаем transcribe_task для MediaTask #{media_task_id}")
-            transcribe_task.delay(media_task_id)
-            event.delete()
+        for event in events:
+            media_task_id = event.media_task_id
 
-    return f"Processed {events.count()} events"
+            if event.event_type == EventTypeChoices.AUDIO_WAV_UPLOADED:
+                print(f"🎧 Запускаем upload_audio_to_yandex_task для MediaTask #{media_task_id}")
+                upload_audio_to_yandex_task.delay(media_task_id)
+                event.delete()
+
+            elif event.event_type == EventTypeChoices.AUDIO_SEND_TO_YANDEX:
+                print(f"📝 Запускаем transcribe_task для MediaTask #{media_task_id}")
+                transcribe_task.delay(media_task_id)
+                event.delete()
+
+            elif event.event_type == EventTypeChoices.TEMPLATE_SELECTED:
+                print(f"🧩 Обнаружен TEMPLATE_SELECTED для MediaTask #{media_task_id} — проверяю готовность транскрибации...")
+
+                audio_ready_event = (
+                    OutboxEvent.objects
+                    .filter(
+                        media_task_id=media_task_id,
+                        event_type=EventTypeChoices.AUDIO_TRANSCRIBATION_READY,
+                    )
+                    .order_by("id")
+                    .first()
+                )
+
+                if audio_ready_event:
+                    print(f"✅ Транскрипт готов. Запускаю gpt_task для MediaTask #{media_task_id}")
+                    gpt_task.delay(media_task_id)
+
+                    # удаляем оба события: текущий TEMPLATE_SELECTED и найденный AUDIO_TRANSCRIBATION_READY
+                    audio_ready_event.delete()
+                    event.delete()
+                else:
+                    print(f"⏳ Транскрипт ещё не готов для MediaTask #{media_task_id}. Ждём событие AUDIO_TRANSCRIBATION_READY.")
+
+        return f"Processed {len(events)} events"
+
+
+@celery_app.task(queue="processing")
+def gpt_task(media_task_id):
+    """
+    Задача по выделению ключевой информации через GPT.
+    """
+    print("=== 🚀 Запуск задачи gpt_task ===")
+    try:
+        media_obj = MediaTask.objects.get(id=media_task_id)
+
+        diarization_segments = media_obj.diarization_segments
+        if isinstance(diarization_segments, str):
+            diarization_segments = json.loads(diarization_segments)
+
+        interview_text = "\n".join(
+            [f"[{seg['speaker']}] {seg['text']}" for seg in diarization_segments]
+        )
+
+        questions = media_obj.cast_template.questions if media_obj.cast_template else []
+        if isinstance(questions, str):
+            questions = json.loads(questions)
+
+        questions_text = "\n".join([f"{q['id']}. {q['text']}" for q in questions])
+
+        system_prompt = (
+            "Вы являетесь кастдев-интервьюером и задаете ряд вопросов о вашем продукте "
+            "потенциальному пользователю. Вам нужно найти ответы в данном интервью на список вопросов ниже. "
+            "Если в тексте нет ответа на вопрос — верните \"Нет ответа\". "
+            "Ответ нужно давать буквально прямыми цитатами, как их сказал пользователь, не перефразировать. "
+            "Ответ верните в формате JSON вида: {\"номер вопроса\": \"ответ\"}."
+        )
+
+        user_prompt = f"Интервью:\n{interview_text}\n\nСписок вопросов:\n{questions_text}"
+
+        messages = [
+            {"role": "system", "text": system_prompt},
+            {"role": "user", "text": user_prompt},
+        ]
+
+        sdk = YCloudML(
+            folder_id=settings.YANDEX_FOLDER_ID,
+            auth=settings.YANDEX_OAUTH_TOKEN,
+        )
+
+        tokenized = sdk.models.completions("yandexgpt").tokenize(messages)
+        print(f"🔢 Количество токенов: {len(tokenized)}")
+
+        result = sdk.models.completions("yandexgpt").configure(temperature=0.3).run(messages)
+
+        # result — это список Alternative, нужно взять .text
+        gpt_raw_text = result[0].text if result else "{}"
+        print(f"=== 📝 Ответ GPT ===\n{gpt_raw_text}")
+
+        # Пытаемся распарсить как JSON
+        try:
+            gpt_json = json.loads(gpt_raw_text)
+        except json.JSONDecodeError:
+            print("⚠️ Ответ GPT не является валидным JSON, сохраняю как raw string")
+            gpt_json = None
+
+        # Сохраняем в MediaTask
+        media_obj.gpt_raw_response = gpt_raw_text
+        media_obj.gpt_result = gpt_json
+        media_obj.save(update_fields=["gpt_result", "gpt_raw_response"])
+
+        OutboxEvent.objects.create(
+            media_task=media_obj,
+            event_type=EventTypeChoices.GPT_RESULT_READY,
+            payload={"media_task_id": media_task_id},
+        )
+
+    except MediaTask.DoesNotExist:
+        print(f"❌ MediaTask #{media_task_id} не найден")
+    except Exception as e:
+        print(f"❌ Ошибка при работе с gpt_task: {e}")
+
 
 
 @celery_app.task(queue="processing")

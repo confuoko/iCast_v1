@@ -114,12 +114,41 @@ class VideoUploadForm(forms.Form):
     file = forms.FileField(label="Выберите видео или аудиофайл")
 
 
-class UploadSuccessView(LoginRequiredMixin, View):
+class UploadSuccessView(LoginRequiredMixin, UpdateView):
+    model = MediaTask
+    fields = ["cast_template"]
     template_name = "upload_success.html"
+    context_object_name = "media_task"
 
-    def get(self, request, pk):
-        media_task = get_object_or_404(MediaTask, pk=pk)
-        return render(request, self.template_name, {"media_task": media_task})
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["cast_templates"] = CastTemplate.objects.all()
+        return context
+
+    def form_valid(self, form):
+        """
+        Этот метод вызывается, когда форма прошла валидацию.
+        Здесь мы можем добавить кастомные действия — например, создание OutboxEvent.
+        """
+        response = super().form_valid(form)
+
+        media_task = self.object  # уже сохранённый объект
+        if media_task.cast_template:
+            # Создаём OutboxEvent, чтобы запустить обработку по выбранному шаблону
+            OutboxEvent.objects.create(
+                media_task=media_task,
+                event_type=EventTypeChoices.TEMPLATE_SELECTED,
+                payload={
+                    "cast_template": media_task.cast_template.id,
+                    "selected_by": self.request.user.username,
+                },
+            )
+            messages.success(self.request, "Шаблон выбран, задача на обработку создана!")
+
+        return response
+
+    def get_success_url(self):
+        return reverse_lazy("main")
 
 
 class MyTemplatesView(LoginRequiredMixin, ListView):
