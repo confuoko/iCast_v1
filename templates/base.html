@@ -29,12 +29,13 @@
 
       <!-- 🔹 Верхняя панель -->
       <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-4">
-        <h1 class="h4 mb-0">iCast</h1>
+        <h1 class="h4 mb-0">iCust</h1>
         <div>
           {% if user.is_authenticated %}
             <span class="me-2">Привет, {{ user.username }}!</span>
             <a href="{% url 'main' %}" class="btn btn-sm btn-outline-primary me-1">Загрузка</a>
             <a href="{% url 'my_templates' %}" class="btn btn-sm btn-outline-primary me-1">Мои шаблоны</a>
+            <a href="{% url 'my_tasks' %}" class="btn btn-sm btn-outline-primary me-1">Мои задачи на обработку</a>
             <a href="{% url 'logout' %}" class="btn btn-sm btn-outline-danger">Выйти</a>
           {% else %}
             <a href="{% url 'login' %}" class="btn btn-sm btn-outline-primary me-2">Войти</a>

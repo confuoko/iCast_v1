@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+
+{% block title %}Мои задачи{% endblock %}
+
+{% block content %}
+  <h2 class="mb-4">📝 Мои задачи</h2>
+
+  {% if tasks %}
+    <div class="table-responsive">
+      <table class="table table-bordered table-hover align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>Название файла</th>
+            <th>Дата загрузки</th>
+            <th>Длительность (сек)</th>
+            <th>Статус</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for task in tasks %}
+            <tr>
+              <td>{{ forloop.counter }}</td>
+              <td>{{ task.audio_uploaded_title|default:"—" }}</td>
+              <td>{{ task.audio_local_uploaded_at|date:"d.m.Y H:i" }}</td>
+              <td>{{ task.duration_seconds|default:"—" }}</td>
+              <td>{{ task.get_status_display }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="alert alert-info">
+      У вас пока нет загруженных задач.
+    </div>
+  {% endif %}
+{% endblock %}

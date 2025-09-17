@@ -165,6 +165,20 @@ class MyTemplatesView(LoginRequiredMixin, ListView):
         return CastTemplate.objects.all()
 
 
+class MyTasksView(LoginRequiredMixin, ListView):
+    """
+    Список всех шаблонов CastTemplate
+    """
+    model = MediaTask
+    template_name = "tasks_list.html"
+    context_object_name = "tasks"
+
+    def get_queryset(self):
+        user = self.request.user
+        integration = getattr(user, "integration", None)
+        return MediaTask.objects.filter()
+
+
 class CastTemplateCreateView(LoginRequiredMixin, CreateView):
     """
     Создание нового шаблона
