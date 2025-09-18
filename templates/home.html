@@ -3,13 +3,39 @@
 {% block title %}Главная - iCast{% endblock %}
 
 {% block content %}
-<h2>Добро пожаловать в iCast!</h2>
+  <h2 class="mb-4">Мои проекты</h2>
 
-{% if user.is_authenticated %}
-    <p>Вы успешно авторизованы как <strong>{{ user.username }}</strong>.</p>
-    <p>Теперь вы можете пользоваться всеми возможностями приложения.</p>
-    <p>Для загрузки видео <a href="{% url 'main' %}">Загрузить</a>
-{% else %}
-    <p>Для доступа к функциям приложения, пожалуйста, <a href="{% url 'login' %}">войдите</a> или <a href="{% url 'register' %}">зарегистрируйтесь</a>.</p>
-{% endif %}
+  <div class="mb-3">
+    <a href="{% url 'project-create' %}" class="btn btn-primary">
+      Создать проект
+    </a>
+  </div>
+
+  <style>
+    .project-card {
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+    }
+    .project-card:hover {
+      transform: scale(1.01);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .project-card:active {
+      transform: scale(0.98);
+    }
+  </style>
+
+  <div class="d-flex flex-column gap-3">
+    {% for project in projects %}
+      <a href="{% url 'project-tasks' project.pk %}" class="text-decoration-none text-dark">
+        <div class="card project-card p-3 bg-success-subtle rounded-3 shadow-sm" style="cursor: pointer;">
+          <strong class="h5 mb-0">{{ project.project_title }}</strong>
+          {% if project.description %}
+            <p class="mb-0 mt-1 text-muted">{{ project.description }}</p>
+          {% endif %}
+        </div>
+      </a>
+    {% empty %}
+      <p class="text-muted">У вас пока нет проектов.</p>
+    {% endfor %}
+  </div>
 {% endblock %}

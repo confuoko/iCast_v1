@@ -14,11 +14,44 @@ from django.views import View
 from django.views.generic import CreateView, TemplateView, ListView, UpdateView
 from django.urls import reverse_lazy
 
-from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate
+from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate, Project
 
 
-class HomeView(LoginRequiredMixin, TemplateView):
+class HomeView(LoginRequiredMixin, ListView):
+    model = Project
     template_name = 'home.html'
+    context_object_name = 'projects'
+
+    def get_queryset(self):
+        # Получаем проекты только текущей интеграции пользователя
+        return Project.objects.filter(integration=self.request.user.integration)
+
+
+class ProjectCreateView(LoginRequiredMixin, CreateView):
+    model = Project
+    template_name = 'project_create.html'
+    fields = ['project_title', 'description']  # пока без выбора integration
+    success_url = reverse_lazy('home')
+
+    def form_valid(self, form):
+        # автоматически проставляем интеграцию пользователя
+        form.instance.integration = self.request.user.integration
+        return super().form_valid(form)
+
+class ProjectTaskListView(LoginRequiredMixin, ListView):
+    model = MediaTask
+    template_name = "project_tasks.html"
+    context_object_name = "tasks"
+
+    def get_queryset(self):
+        # Получаем проект по pk из URL
+        self.project = get_object_or_404(Project, pk=self.kwargs["pk"], integration=self.request.user.integration)
+        return MediaTask.objects.filter(integration=self.request.user.integration, project=self.project)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["project"] = self.project
+        return context
 
 class MainView(LoginRequiredMixin, View):
     template_name = 'main.html'

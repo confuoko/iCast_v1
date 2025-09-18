@@ -257,6 +257,42 @@ class MediaTask(models.Model):
         null=True,
         blank=True
     )
+    token_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Количество токенов"
+    )
+    total_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Итоговая цена"
+    )
+    excel_path = models.CharField(
+        max_length=500,
+        null=True,
+        blank=True,
+        verbose_name="Путь к Excel в хранилище"
+    )
+    pdf_path = models.CharField(
+        max_length=500,
+        null=True,
+        blank=True,
+        verbose_name="Путь к PDF в хранилище"
+    )
+    transcribation_path = models.CharField(
+        max_length=500,
+        null=True,
+        blank=True,
+        verbose_name="Путь к транскрипции в хранилище"
+    )
+    finished_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Дата и время завершения"
+    )
+
 
 class EventTypeChoices(models.TextChoices):
     VIDEO_UPLOADED_LOCAL = "video_uploaded", "Видео загружено"

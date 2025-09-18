@@ -5,6 +5,8 @@ from . import views
 
 urlpatterns = [
     path('', views.HomeView.as_view(), name='home'),
+    path('projects/create/', views.ProjectCreateView.as_view(), name='project-create'),
+    path('projects/<int:pk>/', views.ProjectTaskListView.as_view(), name='project-tasks'),
     path('main/', views.MainView.as_view(), name='main'),
     path("upload-success/<int:pk>/", views.UploadSuccessView.as_view(), name="upload_success"),
     path("my-templates/", views.MyTemplatesView.as_view(), name="my_templates"),
