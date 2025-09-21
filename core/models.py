@@ -304,8 +304,10 @@ class EventTypeChoices(models.TextChoices):
     AUDIO_TRANSCRIBE_STARTED = "audio_transcribe_started", "Транскрибация аудио начата"
     AUDIO_TRANSCRIBATION_READY = "audio_transcribation_ready", "Транскрибация успешно завершена"
 
+
     TEMPLATE_SELECTED = "template_selected", "Шаблон выбран"
     GPT_RESULT_READY = "gpt_result_ready", "Результат GPT готов"
+    EXCEL_FILE_SAVED_TO_YANDEX = "excel_file_saved_to_yandex", "Файл Excel загружен в Яндекс хранилище"
 
     DOCUMENT_CREATED = "document_created", "Документ создан"
     CASE_SYNCED = "case_synced", "Синхронизация дела"

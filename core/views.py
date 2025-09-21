@@ -182,7 +182,7 @@ class UploadSuccessView(LoginRequiredMixin, UpdateView):
         return response
 
     def get_success_url(self):
-        return reverse_lazy("main")
+        return reverse_lazy("home")
 
 
 class MyTemplatesView(LoginRequiredMixin, ListView):

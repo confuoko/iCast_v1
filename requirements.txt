@@ -5,3 +5,4 @@ celery==5.5.3
 python-dotenv
 requests
 yandex-cloud-ml-sdk
+xlsxwriter

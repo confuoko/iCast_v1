@@ -6,6 +6,7 @@ import json
 
 
 import boto3
+import xlsxwriter
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 import requests
@@ -24,59 +25,59 @@ def handler_task():
     Проверяет OutboxEvent и запускает задачи по нужной очереди
     """
     print("=== Запуск handler_task ===")
-    events = OutboxEvent.objects.all()
-    print(f"🔍 Найдено OutboxEvent: {events.count()} шт.")
 
-    # core/tasks.py (фрагмент)
+    # Материализуем queryset, чтобы удаление не ломало итерацию
+    events = list(OutboxEvent.objects.all())
+    print(f"🔍 Найдено OutboxEvent: {len(events)} шт.")
 
-    @celery_app.task(queue="handler")
-    def handler_task():
-        """
-        Проверяет OutboxEvent и запускает задачи по нужной очереди
-        """
-        print("=== Запуск handler_task ===")
-
-        # Материализуем queryset, чтобы удаление не ломало итерацию
-        events = list(OutboxEvent.objects.all())
-        print(f"🔍 Найдено OutboxEvent: {len(events)} шт.")
-
-        for event in events:
+    for event in events:
+        try:
             media_task_id = event.media_task_id
+            print(f"Объект MediaTask ID #{event.media_task_id}")
+            print(f"Текущий EVENT_TYPE #{event.event_type}")
+        except Exception as e:
+            print(f"⚠️ Ошибка при выводе события {event.id}: {e}")
 
-            if event.event_type == EventTypeChoices.AUDIO_WAV_UPLOADED:
-                print(f"🎧 Запускаем upload_audio_to_yandex_task для MediaTask #{media_task_id}")
-                upload_audio_to_yandex_task.delay(media_task_id)
-                event.delete()
+        if event.event_type == EventTypeChoices.GPT_RESULT_READY:
+            print(f"📝 Запускаем сохранение Excel для MediaTask #{media_task_id}")
+            save_excel_to_yandex_task.delay(media_task_id)
+            event.delete()
+        if event.event_type == EventTypeChoices.AUDIO_WAV_UPLOADED:
+            print(f"🎧 Запускаем upload_audio_to_yandex_task для MediaTask #{media_task_id}")
+            upload_audio_to_yandex_task.delay(media_task_id)
+            event.delete()
 
-            elif event.event_type == EventTypeChoices.AUDIO_SEND_TO_YANDEX:
-                print(f"📝 Запускаем transcribe_task для MediaTask #{media_task_id}")
-                transcribe_task.delay(media_task_id)
-                event.delete()
+        elif event.event_type == EventTypeChoices.AUDIO_SEND_TO_YANDEX:
+            print(f"📝 Запускаем transcribe_task для MediaTask #{media_task_id}")
+            transcribe_task.delay(media_task_id)
+            event.delete()
 
-            elif event.event_type == EventTypeChoices.TEMPLATE_SELECTED:
-                print(f"🧩 Обнаружен TEMPLATE_SELECTED для MediaTask #{media_task_id} — проверяю готовность транскрибации...")
+        elif event.event_type == EventTypeChoices.TEMPLATE_SELECTED:
+            print(f"🧩 Обнаружен TEMPLATE_SELECTED для MediaTask #{media_task_id} — проверяю готовность транскрибации...")
 
-                audio_ready_event = (
-                    OutboxEvent.objects
-                    .filter(
-                        media_task_id=media_task_id,
-                        event_type=EventTypeChoices.AUDIO_TRANSCRIBATION_READY,
-                    )
-                    .order_by("id")
-                    .first()
+            audio_ready_event = (
+                OutboxEvent.objects
+                .filter(
+                    media_task_id=media_task_id,
+                    event_type=EventTypeChoices.AUDIO_TRANSCRIBATION_READY,
                 )
+                .order_by("id")
+                .first()
+            )
 
-                if audio_ready_event:
-                    print(f"✅ Транскрипт готов. Запускаю gpt_task для MediaTask #{media_task_id}")
-                    gpt_task.delay(media_task_id)
+            if audio_ready_event:
+                print(f"✅ Транскрипт готов. Запускаю gpt_task для MediaTask #{media_task_id}")
+                gpt_task.delay(media_task_id)
 
-                    # удаляем оба события: текущий TEMPLATE_SELECTED и найденный AUDIO_TRANSCRIBATION_READY
-                    audio_ready_event.delete()
-                    event.delete()
-                else:
-                    print(f"⏳ Транскрипт ещё не готов для MediaTask #{media_task_id}. Ждём событие AUDIO_TRANSCRIBATION_READY.")
+                # удаляем оба события: текущий TEMPLATE_SELECTED и найденный AUDIO_TRANSCRIBATION_READY
+                audio_ready_event.delete()
+                event.delete()
+            else:
+                print(f"⏳ Транскрипт ещё не готов для MediaTask #{media_task_id}. Ждём событие AUDIO_TRANSCRIBATION_READY.")
+        else:
+            print(f"⚠️ Необработанный тип события: {event.event_type!r}")
 
-        return f"Processed {len(events)} events"
+    return f"Processed {len(events)} events"
 
 
 @celery_app.task(queue="processing")
@@ -131,17 +132,28 @@ def gpt_task(media_task_id):
         gpt_raw_text = result[0].text if result else "{}"
         print(f"=== 📝 Ответ GPT ===\n{gpt_raw_text}")
 
-        # Пытаемся распарсить как JSON
+        # Очистка от обрамляющих ```` ``` ```` и лишних пробелов
+        gpt_cleaned_text = gpt_raw_text.strip()
+        if gpt_cleaned_text.startswith("```") and gpt_cleaned_text.endswith("```"):
+            gpt_cleaned_text = gpt_cleaned_text.strip("`").strip()
+
+        # Попробуем снова распарсить
         try:
-            gpt_json = json.loads(gpt_raw_text)
-        except json.JSONDecodeError:
-            print("⚠️ Ответ GPT не является валидным JSON, сохраняю как raw string")
+            gpt_json = json.loads(gpt_cleaned_text)
+            print("✅ Успешно распарсили JSON")
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Ошибка парсинга JSON: {e}")
             gpt_json = None
 
-        # Сохраняем в MediaTask
-        media_obj.gpt_raw_response = gpt_raw_text
-        media_obj.gpt_result = gpt_json
-        media_obj.save(update_fields=["gpt_result", "gpt_raw_response"])
+        # Сохраняем как есть (сырой и/или распарсенный)
+        media_obj.gpt_raw_response = gpt_raw_text  # Оригинал, с бэктиками
+        if gpt_json:
+            # красиво сериализуем и сохраняем
+            media_obj.gpt_result = json.dumps(gpt_json, ensure_ascii=False, indent=2)
+        else:
+            media_obj.gpt_result = None
+
+        media_obj.save(update_fields=["gpt_raw_response", "gpt_result"])
 
         OutboxEvent.objects.create(
             media_task=media_obj,
@@ -364,6 +376,116 @@ def upload_task(media_task_id):
 
 
 
+@celery_app.task(queue="processing")
+def save_excel_to_yandex_task(media_task_id):
+    # === S3 Конфигурация ===
+    AWS_ACCESS_KEY_ID = settings.AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY = settings.AWS_SECRET_ACCESS_KEY
+    BUCKET_NAME = settings.BUCKET_NAME
+    REGION = settings.REGION
+    ENDPOINT_URL = settings.ENDPOINT_URL
+
+    try:
+        media_obj = MediaTask.objects.get(id=media_task_id)
+        file_base = media_obj.audio_title_saved
+
+        if not file_base:
+            print(f"❌ Нет названия файла у MediaTask #{media_obj.id}")
+            return
+
+        gpt_result = media_obj.gpt_result
+        if not gpt_result:
+            print(f"❌ Нет gpt_result от GPT для MediaTask #{media_obj.id}")
+            return
+
+        try:
+            parsed_json = json.loads(gpt_result)
+        except json.JSONDecodeError as e:
+            print(f"❌ Ошибка парсинга gpt_result: {e}")
+            return
+
+        # === Подготовка путей ===
+        os.makedirs(os.path.join(settings.MEDIA_ROOT, "excel_uploads"), exist_ok=True)
+        local_excel_file_path = os.path.join(settings.MEDIA_ROOT, "excel_uploads", f"{file_base}.xlsx")
+        object_name = f"excel_uploads/{file_base}.xlsx"
+
+        # === Создание Excel ===
+        workbook = xlsxwriter.Workbook(local_excel_file_path)
+        worksheet = workbook.add_worksheet("Ответы")
+
+        # Форматы
+        header_format = workbook.add_format({
+            "bold": True, "bg_color": "#D9E1F2",
+            "align": "center", "valign": "vcenter",
+            "border": 1
+        })
+        cell_format = workbook.add_format({
+            "text_wrap": True,
+            "valign": "top",
+            "border": 1
+        })
+
+        # Заголовки
+        worksheet.write(0, 0, "№", header_format)
+        worksheet.write(0, 1, "Ответ", header_format)
+
+        # Заполнение строк
+        row = 1
+        for key in sorted(parsed_json.keys(), key=lambda x: int(x)):
+            answer = parsed_json[key]
+            worksheet.write(row, 0, key, cell_format)
+            worksheet.write(row, 1, answer, cell_format)
+            row += 1
+
+        # Настройка ширины колонок
+        worksheet.set_column(0, 0, 5)
+        worksheet.set_column(1, 1, 100)
+
+        workbook.close()
+        print(f"💾 Excel-файл успешно создан: {local_excel_file_path}")
+
+        # === Загрузка в Яндекс Object Storage ===
+        print(f"📤 Загружаем файл {object_name} в хранилище...")
+
+        session = boto3.session.Session()
+        s3_client = session.client(
+            service_name="s3",
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            endpoint_url=ENDPOINT_URL,
+            region_name=REGION
+        )
+
+        with open(local_excel_file_path, "rb") as f:
+            s3_client.put_object(Bucket=BUCKET_NAME, Key=object_name, Body=f)
+
+        public_url = f"{ENDPOINT_URL}/{BUCKET_NAME}/{object_name}"
+        media_obj.excel_path = public_url
+        media_obj.save(update_fields=["excel_path"])
+
+        print(f"✅ Excel-файл загружен в Яндекс S3: {public_url}")
+
+        # === OutboxEvent ===
+        OutboxEvent.objects.create(
+            media_task=media_obj,
+            event_type=EventTypeChoices.EXCEL_FILE_SAVED_TO_YANDEX,
+            payload={
+                "filename": f"{file_base}.xlsx",
+                "storage_url": public_url,
+                "uploaded_by": "system_task",
+            }
+        )
+
+        print(f"📨 OutboxEvent EXCEL_FILE_SAVED_TO_YANDEX создан для MediaTask #{media_task_id}")
+
+    except MediaTask.DoesNotExist:
+        print(f"❌ MediaTask #{media_task_id} не найден")
+
+    except (BotoCoreError, ClientError) as e:
+        print(f"❌ Ошибка при загрузке в S3: {e}")
+
+    except Exception as e:
+        print(f"❌ Общая ошибка: {e}")
 
 
 
