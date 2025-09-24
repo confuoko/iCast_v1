@@ -66,6 +66,12 @@ class CastTemplate(models.Model):
         blank=True,
         verbose_name="Интеграция",
     )
+    promt_text = models.TextField(
+        verbose_name="Текст промта",
+        help_text="Промт для запроса",
+        null=True,
+        blank=True,
+    )
     title = models.CharField(
         max_length=255,
         verbose_name="Template Title",

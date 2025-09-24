@@ -13,6 +13,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.views import View
 from django.views.generic import CreateView, TemplateView, ListView, UpdateView
 from django.urls import reverse_lazy
+from django.views.generic.edit import FormMixin
 
 from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate, Project
 
@@ -27,6 +28,7 @@ class HomeView(LoginRequiredMixin, ListView):
         return Project.objects.filter(integration=self.request.user.integration)
 
 
+
 class ProjectCreateView(LoginRequiredMixin, CreateView):
     model = Project
     template_name = 'project_create.html'
@@ -38,37 +40,54 @@ class ProjectCreateView(LoginRequiredMixin, CreateView):
         form.instance.integration = self.request.user.integration
         return super().form_valid(form)
 
-class ProjectTaskListView(LoginRequiredMixin, ListView):
+
+class VideoUploadForm(forms.Form):
+    file = forms.FileField(
+        label="Выберите файл для загрузки",
+        widget=forms.ClearableFileInput(attrs={
+            "class": "form-control",
+            "accept": "video/*,audio/wav"
+        }),
+        help_text="Поддерживаются форматы: MP4, MOV, AVI, MKV, WAV"
+    )
+
+
+class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
     model = MediaTask
     template_name = "project_tasks.html"
     context_object_name = "tasks"
+    form_class = VideoUploadForm  # форма загрузки файла
 
     def get_queryset(self):
-        # Получаем проект по pk из URL
-        self.project = get_object_or_404(Project, pk=self.kwargs["pk"], integration=self.request.user.integration)
-        return MediaTask.objects.filter(integration=self.request.user.integration, project=self.project)
+        # получаем проект по pk и фильтруем задачи по нему
+        self.project = get_object_or_404(
+            Project,
+            pk=self.kwargs["pk"],
+            integration=self.request.user.integration
+        )
+        return MediaTask.objects.filter(project=self.project)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["project"] = self.project
+        context["form"] = self.get_form()
         return context
 
-class MainView(LoginRequiredMixin, View):
-    template_name = 'main.html'
-
-    def get(self, request):
-        form = VideoUploadForm()
-        return render(request, self.template_name, {'form': form})
-
-    def post(self, request):
-        form = VideoUploadForm(request.POST, request.FILES)
+    def post(self, request, *args, **kwargs):
+        self.project = get_object_or_404(
+            Project,
+            pk=self.kwargs["pk"],
+            integration=self.request.user.integration
+        )
+        form = self.get_form()
         if form.is_valid():
             file = form.cleaned_data['file']
             original_name = file.name
-            ext = os.path.splitext(original_name)[1].lower().lstrip('.')  # расширение
+            ext = os.path.splitext(original_name)[1].lower().lstrip('.')
 
+            # генерируем имя и путь для сохранения файла
             saved_name = f"{timezone.now().strftime('%Y%m%d%H%M%S')}_{original_name}"
-            save_path = os.path.join('media_uploads', saved_name)  # универсальная папка для аудио/видео
+            save_path = os.path.join('media_uploads', saved_name)
             full_path = os.path.join(settings.MEDIA_ROOT, save_path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
@@ -76,17 +95,20 @@ class MainView(LoginRequiredMixin, View):
                 for chunk in file.chunks():
                     destination.write(chunk)
 
-            # === Логика выбора: видео или аудио ===
-            if ext in ["mp4", "mov", "avi", "mkv"]:
-                # Создаем MediaTask для видео
-                media_task = MediaTask.objects.create(
-                    video_uploaded_title=original_name,
-                    video_title_saved=saved_name,
-                    video_extension=ext,
-                    video_storage_url=os.path.join(settings.MEDIA_URL, save_path),
-                )
+            # общие аргументы для MediaTask (с интеграцией!)
+            create_kwargs = {
+                "project": self.project,
+                "integration": self.request.user.integration,
+            }
 
-                # Создаем OutboxEvent для видео
+            if ext in ["mp4", "mov", "avi", "mkv"]:
+                create_kwargs.update({
+                    "video_uploaded_title": original_name,
+                    "video_title_saved": saved_name,
+                    "video_extension": ext,
+                    "video_storage_url": os.path.join(settings.MEDIA_URL, save_path),
+                })
+                media_task = MediaTask.objects.create(**create_kwargs)
                 OutboxEvent.objects.create(
                     media_task=media_task,
                     event_type=EventTypeChoices.VIDEO_UPLOADED_LOCAL,
@@ -94,19 +116,18 @@ class MainView(LoginRequiredMixin, View):
                         "filename": saved_name,
                         "extension": ext,
                         "uploaded_by": request.user.username,
+                        "project_id": self.project.pk,
                     }
                 )
 
             elif ext == "wav":
-                # Создаем MediaTask для аудио
-                media_task = MediaTask.objects.create(
-                    audio_uploaded_title=original_name,
-                    audio_title_saved=saved_name,
-                    audio_extension_uploaded=ext,
-                    audio_storage_url=os.path.join(settings.MEDIA_URL, save_path),
-                )
-
-                # Создаем OutboxEvent для аудио
+                create_kwargs.update({
+                    "audio_uploaded_title": original_name,
+                    "audio_title_saved": saved_name,
+                    "audio_extension_uploaded": ext,
+                    "audio_storage_url": os.path.join(settings.MEDIA_URL, save_path),
+                })
+                media_task = MediaTask.objects.create(**create_kwargs)
                 OutboxEvent.objects.create(
                     media_task=media_task,
                     event_type=EventTypeChoices.AUDIO_WAV_UPLOADED,
@@ -114,14 +135,97 @@ class MainView(LoginRequiredMixin, View):
                         "filename": saved_name,
                         "extension": ext,
                         "uploaded_by": request.user.username,
+                        "project_id": self.project.pk,
                     }
                 )
             else:
-                # Если расширение неизвестно — можно вернуть ошибку
+                messages.error(request, f"Неподдерживаемый тип файла: {ext}")
+                return self.form_invalid(form)
+
+            # редирект на страницу успеха с pk созданной задачи
+            return redirect('upload_success', pk=media_task.pk)
+
+        return self.form_invalid(form)
+
+class MainView(LoginRequiredMixin, View):
+    template_name = 'main.html'
+
+    def get(self, request):
+        form = VideoUploadForm()
+        return render(request, self.template_name, {
+            'form': form,
+            'project_id': request.GET.get('project_id')  # пробрасываем в шаблон
+        })
+
+    def post(self, request):
+        project_id = request.POST.get("project_id")
+        project = None
+        if project_id:
+            project = get_object_or_404(Project, pk=project_id)
+
+        form = VideoUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            file = form.cleaned_data['file']
+            original_name = file.name
+            ext = os.path.splitext(original_name)[1].lower().lstrip('.')  # расширение
+
+            saved_name = f"{timezone.now().strftime('%Y%m%d%H%M%S')}_{original_name}"
+            save_path = os.path.join('media_uploads', saved_name)
+            full_path = os.path.join(settings.MEDIA_ROOT, save_path)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+            with open(full_path, 'wb+') as destination:
+                for chunk in file.chunks():
+                    destination.write(chunk)
+
+            # === Создаем MediaTask (с привязкой к проекту, если передан) ===
+            create_kwargs = {
+                "project": project,
+            }
+
+            if ext in ["mp4", "mov", "avi", "mkv"]:
+                create_kwargs.update({
+                    "video_uploaded_title": original_name,
+                    "video_title_saved": saved_name,
+                    "video_extension": ext,
+                    "video_storage_url": os.path.join(settings.MEDIA_URL, save_path),
+                })
+                media_task = MediaTask.objects.create(**create_kwargs)
+
+                OutboxEvent.objects.create(
+                    media_task=media_task,
+                    event_type=EventTypeChoices.VIDEO_UPLOADED_LOCAL,
+                    payload={
+                        "filename": saved_name,
+                        "extension": ext,
+                        "uploaded_by": request.user.username,
+                        "project_id": project_id,
+                    }
+                )
+
+            elif ext == "wav":
+                create_kwargs.update({
+                    "audio_uploaded_title": original_name,
+                    "audio_title_saved": saved_name,
+                    "audio_extension_uploaded": ext,
+                    "audio_storage_url": os.path.join(settings.MEDIA_URL, save_path),
+                })
+                media_task = MediaTask.objects.create(**create_kwargs)
+
+                OutboxEvent.objects.create(
+                    media_task=media_task,
+                    event_type=EventTypeChoices.AUDIO_WAV_UPLOADED,
+                    payload={
+                        "filename": saved_name,
+                        "extension": ext,
+                        "uploaded_by": request.user.username,
+                        "project_id": project_id,
+                    }
+                )
+            else:
                 messages.error(request, f"Неподдерживаемый тип файла: {ext}")
                 return render(request, self.template_name, {'form': form})
 
-            # ✅ редирект на страницу успеха с pk
             return redirect('upload_success', pk=media_task.pk)
 
         return render(request, self.template_name, {'form': form})
@@ -143,7 +247,7 @@ class CustomLoginView(LoginView):
     redirect_authenticated_user = True
 
 
-class VideoUploadForm(forms.Form):
+class VideoUploadForm2(forms.Form):
     file = forms.FileField(label="Выберите видео или аудиофайл")
 
 

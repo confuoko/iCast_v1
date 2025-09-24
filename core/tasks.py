@@ -17,6 +17,7 @@ from yandex_cloud_ml_sdk import YCloudML
 from core.models import OutboxEvent, EventTypeChoices, MediaTask
 
 from backend.celery import app as celery_app
+from core.services import build_prompt
 
 
 @celery_app.task(queue="handler")
@@ -97,24 +98,23 @@ def gpt_task(media_task_id):
             [f"[{seg['speaker']}] {seg['text']}" for seg in diarization_segments]
         )
 
-        questions = media_obj.cast_template.questions if media_obj.cast_template else []
-        if isinstance(questions, str):
-            questions = json.loads(questions)
-
-        questions_text = "\n".join([f"{q['id']}. {q['text']}" for q in questions])
-
-        system_prompt = (
+        system_prompt_start = (
             "Вы являетесь кастдев-интервьюером и задаете ряд вопросов о вашем продукте "
             "потенциальному пользователю. Вам нужно найти ответы в данном интервью на список вопросов ниже. "
             "Если в тексте нет ответа на вопрос — верните \"Нет ответа\". "
             "Ответ нужно давать буквально прямыми цитатами, как их сказал пользователь, не перефразировать. "
-            "Ответ верните в формате JSON вида: {\"номер вопроса\": \"ответ\"}."
+            "Ответ верните строго в формате JSON (только JSON, без комментариев), где ключ — номер вопроса, а значение — текст ответа.\n"
+            "Пример:\n"
+            "{\n"
+            "  \"1\": \"ответ на вопрос 1\",\n"
+            "  \"2\": \"Нет ответа\"\n"
+            "}\n\n"
         )
-
-        user_prompt = f"Интервью:\n{interview_text}\n\nСписок вопросов:\n{questions_text}"
+        questions_text = build_prompt()
+        user_prompt = f"Интервью:\n{interview_text}"
 
         messages = [
-            {"role": "system", "text": system_prompt},
+            {"role": "system", "text": system_prompt_start + questions_text},
             {"role": "user", "text": user_prompt},
         ]
 

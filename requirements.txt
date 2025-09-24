@@ -6,3 +6,4 @@ python-dotenv
 requests
 yandex-cloud-ml-sdk
 xlsxwriter
+openai

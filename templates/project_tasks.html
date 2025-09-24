@@ -6,16 +6,29 @@
   <h2 class="mb-4">Задачи проекта: {{ project.project_title }}</h2>
 
   <a href="{% url 'home' %}" class="btn btn-outline-secondary btn-sm mb-3">
-    ← Назад к проектам
+      ← Назад к проектам
   </a>
+
+  <!-- === Форма загрузки файла === -->
+  <form method="post" enctype="multipart/form-data" class="mb-4 p-3 border rounded shadow-sm bg-light">
+    {% csrf_token %}
+    {{ form.file.label_tag }}
+    {{ form.file }}
+    {% if form.file.help_text %}
+      <div class="form-text small text-muted">{{ form.file.help_text }}</div>
+    {% endif %}
+    <button class="btn btn-primary mt-2" type="submit">
+      ➕ Загрузить файл
+    </button>
+  </form>
 
   <style>
     .icon-excel {
-      color: #28c76f; /* более светлый зеленый */
+      color: #28c76f;
       text-shadow: 0 0 4px rgba(40, 199, 111, 0.3);
     }
     .icon-pdf {
-      color: #f44336; /* яркий красный PDF */
+      color: #f44336;
       text-shadow: 0 0 4px rgba(244, 67, 54, 0.3);
     }
     .icon-disabled { opacity: 0.25; filter: grayscale(40%); }
@@ -28,7 +41,7 @@
       text-shadow: 0 0 6px rgba(0,0,0,0.3);
     }
     .task-card:hover {
-      background-color: #f8fff9; /* легкий зеленоватый фон при наведении */
+      background-color: #f8fff9;
       transition: background-color 0.15s ease;
     }
   </style>
@@ -37,7 +50,7 @@
     {% for task in tasks %}
       <div class="card p-3 shadow-sm rounded-3 task-card">
         <div class="d-flex justify-content-between align-items-center mb-2">
-          <strong class="h5 mb-0">{{ task.audio_uploaded_title|default:"Без названия" }}</strong>
+          <strong class="h5 mb-0">{{ task.audio_uploaded_title|default:task.video_uploaded_title|default:"Без названия" }}</strong>
           <span class="badge
             {% if task.status == 'success' %}bg-success
             {% elif task.status == 'failed' %}bg-danger
@@ -48,7 +61,7 @@
         </div>
 
         <div class="small text-muted mb-2">
-          <div>Загружено: {{ task.audio_local_uploaded_at|date:"d.m.Y H:i" }}</div>
+          <div>Загружено: {{ task.audio_local_uploaded_at|default:task.video_local_uploaded_at|date:"d.m.Y H:i" }}</div>
           <div>Длительность: {{ task.duration_seconds|default:"—" }} сек</div>
         </div>
 

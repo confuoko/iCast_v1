@@ -6,9 +6,12 @@
   <h2>Страница загрузки iCast!</h2>
   <p>Теперь вы можете загрузить видео или аудио.</p>
 
-  <form method="post" enctype="multipart/form-data" class="mb-4">
+<form method="post" enctype="multipart/form-data" class="mb-4">
     {% csrf_token %}
+    {% if project_id %}
+    <input type="hidden" name="project_id" value="{{ project_id }}">
+    {% endif %}
     {{ form.as_p }}
     <button class="btn btn-primary" type="submit">Загрузить</button>
-  </form>
+</form>
 {% endblock %}
