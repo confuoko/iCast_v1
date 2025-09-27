@@ -1,4 +1,5 @@
-from json_templates import INTERVIEW_TEMPLATE
+from core.json_templates import INTERVIEW_TEMPLATE
+
 
 def build_prompt():
     lines = []

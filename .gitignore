@@ -139,3 +139,6 @@ dmypy.json
 *.swp
 *.swo
 *~
+
+# Celery
+celerybeat-schedule.*
