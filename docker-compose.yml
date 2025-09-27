@@ -1,0 +1,137 @@
+version: "3.8"
+
+services:
+  # RabbitMQ брокер сообщений
+  rabbitmq:
+    image: rabbitmq:3.10
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-rabbitmq}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-pass}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Django веб-приложение
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - media_data:/app/media
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER:-rabbitmq}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-pass}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - BUCKET_NAME=${BUCKET_NAME}
+      - NEXARA_API_KEY=${NEXARA_API_KEY}
+      - YANDEX_OAUTH_TOKEN=${YANDEX_OAUTH_TOKEN}
+      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  # Celery Worker для обработки очереди handler
+  celery-worker-handler:
+    build: .
+    volumes:
+      - .:/app
+      - media_data:/app/media
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER:-rabbitmq}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-pass}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - BUCKET_NAME=${BUCKET_NAME}
+      - NEXARA_API_KEY=${NEXARA_API_KEY}
+      - YANDEX_OAUTH_TOKEN=${YANDEX_OAUTH_TOKEN}
+      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    command: celery -A backend worker -Q handler -n worker_handler@%h --loglevel=INFO --pool=solo
+    restart: unless-stopped
+
+  # Celery Worker для обработки очереди processing
+  celery-worker-processing:
+    build: .
+    volumes:
+      - .:/app
+      - media_data:/app/media
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER:-rabbitmq}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-pass}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - BUCKET_NAME=${BUCKET_NAME}
+      - NEXARA_API_KEY=${NEXARA_API_KEY}
+      - YANDEX_OAUTH_TOKEN=${YANDEX_OAUTH_TOKEN}
+      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    command: celery -A backend worker -Q processing -n worker_processing@%h --loglevel=INFO --pool=solo
+    restart: unless-stopped
+
+  # Celery Beat планировщик задач
+  celery-beat:
+    build: .
+    volumes:
+      - .:/app
+      - media_data:/app/media
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER:-rabbitmq}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-pass}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - BUCKET_NAME=${BUCKET_NAME}
+      - NEXARA_API_KEY=${NEXARA_API_KEY}
+      - YANDEX_OAUTH_TOKEN=${YANDEX_OAUTH_TOKEN}
+      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    command: celery -A backend beat --loglevel=INFO
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
+  media_data:
