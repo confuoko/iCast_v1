@@ -1,7 +1,7 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
-from .models import Integration, CastTemplate
+from .models import Integration, CastTemplate, IntegrationSettings
 
 User = get_user_model()
 
@@ -9,6 +9,7 @@ User = get_user_model()
 def create_user_integration(sender, instance, created, **kwargs):
     if created:
         integration = Integration.objects.create(user=instance)
+        settings = IntegrationSettings.objects.create(integration=integration)
 
         for template in CastTemplate.objects.filter(default=True, integration__isnull=True):
             CastTemplate.objects.create(

@@ -9,6 +9,7 @@ urlpatterns = [
     path('projects/<int:pk>/', views.ProjectTaskListView.as_view(), name='project-tasks'),
     path('main/', views.MainView.as_view(), name='main'),
     path("upload-success/<int:pk>/", views.UploadSuccessView.as_view(), name="upload_success"),
+    path("integration-settings/", views.IntegrationSettingsView.as_view(), name="integration_settings"),
     path("my-templates/", views.MyTemplatesView.as_view(), name="my_templates"),
     path("my-tasks/", views.MyTasksView.as_view(), name="my_tasks"),
     path("templates/create/", views.CastTemplateCreateView.as_view(), name="template_create"),

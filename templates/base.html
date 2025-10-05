@@ -56,6 +56,9 @@
           <!-- <a href="{% url 'main' %}" class="btn btn-sm btn-outline-primary me-2">Загрузка</a> -->
           <a href="{% url 'my_templates' %}" class="btn btn-sm btn-outline-primary me-2">Мои шаблоны</a>
           <a href="{% url 'my_tasks' %}" class="btn btn-sm btn-outline-primary me-2">Мои задачи</a>
+          <a href="{% url 'integration_settings' %}" class="btn btn-sm btn-outline-secondary me-2">
+  Мои настройки
+</a>
           <a href="{% url 'logout' %}" class="btn btn-sm btn-outline-danger">Выйти</a>
         {% else %}
           <a href="{% url 'login' %}" class="btn btn-sm btn-outline-primary me-2">Войти</a>

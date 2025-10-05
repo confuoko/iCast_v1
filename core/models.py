@@ -17,9 +17,32 @@ class Integration(models.Model):
         null=True
     )
 
+
     def __str__(self):
         return f"Интеграция для пользователя {self.user.username}"
 
+
+class TemplateTypeChoices(models.TextChoices):
+    FULL = "full", "Full"
+    PARTS = "parts", "Parts"
+
+
+class IntegrationSettings(models.Model):
+    integration = models.ForeignKey(
+        Integration,
+        on_delete=models.CASCADE,
+        related_name="settings",
+        verbose_name="Интеграция"
+    )
+    upload_mode = models.CharField(
+        max_length=10,
+        choices=TemplateTypeChoices.choices,
+        default=TemplateTypeChoices.FULL,
+        verbose_name="Режим загрузки"
+    )
+
+    def __str__(self):
+        return f"Настройки для {self.integration}"
 
 class Project(models.Model):
     """

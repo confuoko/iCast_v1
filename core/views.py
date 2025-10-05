@@ -16,7 +16,8 @@ from django.views.generic import CreateView, TemplateView, ListView, UpdateView
 from django.urls import reverse_lazy
 from django.views.generic.edit import FormMixin
 
-from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate, Project, MediaTaskStatusChoices
+from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate, Project, MediaTaskStatusChoices, \
+    IntegrationSettings, Integration
 
 
 class HomeView(LoginRequiredMixin, ListView):
@@ -27,6 +28,11 @@ class HomeView(LoginRequiredMixin, ListView):
     def get_queryset(self):
         # Получаем проекты только текущей интеграции пользователя
         return Project.objects.filter(integration=self.request.user.integration)
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['integration'] = self.request.user.integration
+        return context
 
 
 
@@ -40,6 +46,11 @@ class ProjectCreateView(LoginRequiredMixin, CreateView):
         # автоматически проставляем интеграцию пользователя
         form.instance.integration = self.request.user.integration
         return super().form_valid(form)
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['integration'] = self.request.user.integration
+        return context
 
 
 class VideoUploadForm(forms.Form):
@@ -76,6 +87,7 @@ class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
         context = super().get_context_data(**kwargs)
         context["project"] = self.project
         context["form"] = self.get_form()
+        context['integration'] = self.request.user.integration
         return context
 
     def post(self, request, *args, **kwargs):
@@ -168,7 +180,8 @@ class MainView(LoginRequiredMixin, View):
         form = VideoUploadForm()
         return render(request, self.template_name, {
             'form': form,
-            'project_id': request.GET.get('project_id')  # пробрасываем в шаблон
+            'project_id': request.GET.get('project_id'),  # пробрасываем в шаблон
+            'integration': request.user.integration
         })
 
     def post(self, request):
@@ -238,11 +251,17 @@ class MainView(LoginRequiredMixin, View):
                 )
             else:
                 messages.error(request, f"Неподдерживаемый тип файла: {ext}")
-                return render(request, self.template_name, {'form': form})
+                return render(request, self.template_name, {
+                    'form': form,
+                    'integration': request.user.integration
+                })
 
             return redirect('upload_success', pk=media_task.pk)
 
-        return render(request, self.template_name, {'form': form})
+        return render(request, self.template_name, {
+            'form': form,
+            'integration': request.user.integration
+        })
 
 
 class RegisterView(CreateView):
@@ -275,6 +294,7 @@ class UploadSuccessView(LoginRequiredMixin, UpdateView):
         context = super().get_context_data(**kwargs)
         integration = self.object.integration
         context["cast_templates"] = CastTemplate.objects.filter(integration=integration)
+        context['integration'] = self.request.user.integration
         return context
 
     def form_valid(self, form):
@@ -314,6 +334,11 @@ class MyTemplatesView(LoginRequiredMixin, ListView):
     def get_queryset(self):
         # Если нужно, можно фильтровать по пользователю или интеграции
         return CastTemplate.objects.filter(integration = self.request.user.integration)
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['integration'] = self.request.user.integration
+        return context
 
 
 class MyTasksView(LoginRequiredMixin, ListView):
@@ -328,6 +353,11 @@ class MyTasksView(LoginRequiredMixin, ListView):
         user = self.request.user
         integration = getattr(user, "integration", None)
         return MediaTask.objects.filter()
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['integration'] = self.request.user.integration
+        return context
 
 
 class CastTemplateCreateView(LoginRequiredMixin, CreateView):
@@ -338,6 +368,11 @@ class CastTemplateCreateView(LoginRequiredMixin, CreateView):
     template_name = "template_form.html"
     fields = ["questions", "template_type", "title"]
     success_url = reverse_lazy("my_templates")
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['integration'] = self.request.user.integration
+        return context
 
 
 class CastTemplateUpdateView(LoginRequiredMixin, UpdateView):
@@ -348,3 +383,32 @@ class CastTemplateUpdateView(LoginRequiredMixin, UpdateView):
     template_name = "template_form.html"
     fields = ["questions", "template_type", "title"]
     success_url = reverse_lazy("my_templates")
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['integration'] = self.request.user.integration
+        return context
+
+class IntegrationSettingsView(LoginRequiredMixin, UpdateView):
+    model = IntegrationSettings
+    fields = ["upload_mode"]  # укажи нужные поля настроек
+    template_name = "integration_settings.html"
+    context_object_name = "settings"
+
+    def get_object(self, queryset=None):
+        # Получаем интеграцию текущего пользователя
+        integration = self.request.user.integration
+        # Получаем или создаем настройки для этой интеграции
+        settings_obj, created = IntegrationSettings.objects.get_or_create(
+            integration=integration,
+            defaults={'upload_mode': 'full'}
+        )
+        return settings_obj
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['integration'] = self.request.user.integration
+        return context
+    
+    def get_success_url(self):
+        return reverse_lazy('home')
