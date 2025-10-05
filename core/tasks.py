@@ -3,9 +3,12 @@
 import os
 
 import json
+import tempfile
 
-
+from collections import defaultdict
+import io
 import boto3
+from boto3.session import Session
 import xlsxwriter
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
@@ -68,6 +71,10 @@ def handler_task():
             )
             if audio_uploaded_event:
                 transcribe_task.delay(media_task_id)
+                # Удаляем оба события
+                audio_uploaded_event.delete()
+                event.delete()
+                print(f"Удалены события TEMPLATE_SELECTED и AUDIO_UPLOADED_TO_YANDEX для MediaTask #{media_task_id}")
             else:
                 print(f"Нет AUDIO_UPLOADED_TO_YANDEX для MediaTask #{media_task_id}, ждем...")
 
@@ -164,6 +171,53 @@ def gpt_task(media_task_id):
         print(f"❌ Ошибка при работе с gpt_task: {e}")
 
 
+def save_transcription_to_s3(media_obj, segments):
+    """
+    Сохраняет транскрибацию посегментно (в порядке Nexara) в .txt файл в S3.
+    Возвращает публичный URL.
+    """
+    # --- Формируем текст посегментно ---
+    lines = []
+    for seg in segments:
+        speaker = seg.get("speaker", "unknown")
+        text = seg.get("text", "").strip()
+        if text:
+            lines.append(f"{speaker}: {text}")
+
+    # --- Объединяем строки в один текст ---
+    txt_content = "\n".join(lines)
+
+    # DEBUG
+    print("[DEBUG] Текст для сохранения:")
+    print(txt_content[:1000])
+
+    # --- Преобразуем в байты ---
+    byte_stream = io.BytesIO(txt_content.encode("utf-8"))
+
+    # --- Имя и путь в S3 ---
+    txt_filename = f"{media_obj.audio_title_saved.rsplit('.', 1)[0]}.txt"
+    s3_txt_path = f"media_transcripts/{txt_filename}"
+
+    # --- S3 клиент ---
+    session = Session()
+    s3_client = session.client(
+        service_name="s3",
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        endpoint_url=settings.ENDPOINT_URL,
+        region_name=settings.REGION
+    )
+
+    # --- Загрузка в S3 ---
+    s3_client.put_object(
+        Bucket=settings.BUCKET_NAME,
+        Key=s3_txt_path,
+        Body=byte_stream,
+        ContentType="text/plain; charset=utf-8"
+    )
+
+    return f"{settings.ENDPOINT_URL}/{settings.BUCKET_NAME}/{s3_txt_path}"
+
 
 @celery_app.task(queue="processing")
 def transcribe_task(media_task_id):
@@ -171,72 +225,85 @@ def transcribe_task(media_task_id):
     Задача по транскрибации аудио через Nexara.
     """
     print("=== Запуск задачи transcribe_task ===")
-    NEXARA_API_KEY = settings.NEXARA_API_KEY
 
-    if NEXARA_API_KEY:
-        print("NEXARA_API_KEY найден!")
-    else:
-        print("NEXARA_API_KEY не найден, задача не будет выполнена")
+    NEXARA_API_KEY = settings.NEXARA_API_KEY
+    if not NEXARA_API_KEY:
+        print("❌ NEXARA_API_KEY не найден, задача не будет выполнена")
         return
 
     try:
-        # 1. Получаем объект MediaTask
+        # --- Получаем MediaTask ---
         media_obj = MediaTask.objects.get(id=media_task_id)
         media_obj.status = MediaTaskStatusChoices.PROCESS_TRANSCRIBATION
         media_obj.save()
 
-        # 2. Берём ссылку на аудио-файл в хранилище Яндекс
         audio_yandex_url = media_obj.audio_storage_url
         if not audio_yandex_url:
-            print(f"❌ У MediaTask #{media_task_id} нет ссылки на аудио (audio_storage_url)")
+            print(f"❌ У MediaTask #{media_task_id} нет ссылки на аудио")
             return
 
         print(f"🔗 Отправляем аудио в Nexara: {audio_yandex_url}")
 
-        # 3. Формируем запрос в Nexara
+        # --- Запрос в Nexara ---
         url = "https://api.nexara.ru/api/v1/audio/transcriptions"
-        headers = {
-            "Authorization": f"Bearer {NEXARA_API_KEY}",
-        }
+        headers = {"Authorization": f"Bearer {NEXARA_API_KEY}"}
         data = {
-            "task": "diarize",                # всегда диаризация
-            "response_format": "verbose_json" # просим развернутый JSON
+            "task": "diarize",
+            "response_format": "verbose_json",
+            "url": audio_yandex_url
         }
-        # Важно: Nexara поддерживает передачу ссылки на файл через поле "url"
-        files = None
-        data["url"] = audio_yandex_url
 
-        # 4. Делаем POST-запрос
-        response = requests.post(url, headers=headers, data=data, files=files)
+        response = requests.post(url, headers=headers, data=data)
         print(f"Nexara ответила со статусом {response.status_code}")
 
-        if response.status_code == 200:
-            result = response.json()
-            print("Результат получен, сохраняем в MediaTask")
-
-            # Сохраняем основные поля
-            media_obj.diarization_segments = result.get("segments", [])
-            media_obj.audio_duration_seconds = result.get("duration")
-            media_obj.nexara_completed_at = timezone.now()
-            media_obj.save()
-
-            # Создаем OutboxEvent, чтобы другие части системы знали о готовом результате
-            OutboxEvent.objects.create(
-                media_task=media_obj,
-                event_type=EventTypeChoices.AUDIO_TRANSCRIBATION_READY,
-                payload={"info": "Диаризация успешно выполнена"}
-            )
-
-        else:
+        if response.status_code != 200:
             print(f"❌ Ошибка от Nexara: {response.text}")
             media_obj.nexara_error = response.text
             media_obj.save()
+            return
+
+        # --- Обработка ответа ---
+        result = response.json()
+        segments = result.get("segments", [])
+        duration = result.get("duration")
+
+        if segments:
+            last_end = segments[-1].get("end")
+            print(f"[DEBUG] Последнее значение end: {last_end} ({type(last_end)})")
+        else:
+            print("[DEBUG] Список сегментов пуст")
+
+        if duration:
+            print(f"[DEBUG] Продолжительность (duration): {duration}")
+        else:
+            print("[DEBUG] Ключ duration отсутствует")
+
+        # --- Сохраняем .txt в S3 ---
+        transcribation_url = save_transcription_to_s3(media_obj, segments)
+
+        # --- Обновляем MediaTask ---
+        media_obj.diarization_segments = segments
+        media_obj.audio_duration_seconds = duration
+        media_obj.nexara_completed_at = timezone.now()
+        media_obj.transcribation_path = transcribation_url
+        media_obj.status = MediaTaskStatusChoices.SUCCESS
+        media_obj.save()
+
+        # --- Создаём OutboxEvent ---
+        OutboxEvent.objects.create(
+            media_task=media_obj,
+            event_type=EventTypeChoices.AUDIO_TRANSCRIBATION_READY,
+            payload={"info": "Диаризация успешно выполнена"}
+        )
+
+        print("✅ Транскрибация и сохранение завершены")
 
     except MediaTask.DoesNotExist:
         print(f"❌ MediaTask #{media_task_id} не найден")
 
     except Exception as e:
-        print(f"❌ Общая ошибка: {e}")
+        print(f"❌ Общая ошибка в transcribe_task: {e}")
+
 
 
 @celery_app.task(queue="processing")
