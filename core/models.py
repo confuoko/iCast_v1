@@ -109,7 +109,10 @@ class MediaTaskStatusChoices(models.TextChoices):
     LOADED = "loaded", "Загружен"
     PROCESS_TRANSCRIBATION = "process_transcribation", "Транскрибация выполняется"
     PROCESS_DATA_EXTRACTION = "process_data_extraction", "Извлечение данных выполняется"
-    SUCCESS = "success", "Успешно завершено"
+    DATA_EXTRACTION_SUCCESS = "data_extraction_success", "Извлечение данных успешно выполнено"
+    SAVE_EXCEL_START = "save_excel_start", "Начало формирования Excel-отчета"
+    SAVE_EXCEL_FINISH="save_excel_finish", "Excel-отчет успешно сформирован"
+    TRANSCRIBATION_SUCCESS = "success", "Успешно завершено"
     FAILED = "failed", "Ошибка"
 
 

@@ -1,11 +1,7 @@
 
 
 import os
-
 import json
-import tempfile
-
-from collections import defaultdict
 import io
 import boto3
 from boto3.session import Session
@@ -20,27 +16,11 @@ from yandex_cloud_ml_sdk import YCloudML
 from core.models import OutboxEvent, EventTypeChoices, MediaTask, MediaTaskStatusChoices
 
 from backend.celery import app as celery_app
-from core.services import build_prompt
 
 
 @celery_app.task(queue="handler")
 def handler_task():
     """
-    Проверяет OutboxEvent и запускает задачи по нужной очереди
-        if event.event_type == EventTypeChoices.GPT_RESULT_READY:
-            print(f"📝 Запускаем сохранение Excel для MediaTask #{media_task_id}")
-            save_excel_to_yandex_task.delay(media_task_id)
-            event.delete()
-        if event.event_type == EventTypeChoices.AUDIO_WAV_UPLOADED:
-            print(f"🎧 Запускаем upload_audio_to_yandex_task для MediaTask #{media_task_id}")
-            upload_audio_to_yandex_task.delay(media_task_id)
-            event.delete()
-
-        elif event.event_type == EventTypeChoices.AUDIO_SEND_TO_YANDEX:
-            print(f"📝 Запускаем transcribe_task для MediaTask #{media_task_id}")
-            transcribe_task.delay(media_task_id)
-            event.delete()
-
     """
     print("=== Запуск handler_task ===")
 
@@ -83,6 +63,12 @@ def handler_task():
             gpt_task.delay(media_task_id)
             event.delete()
             print(f"Удалено событие AUDIO_TRANSCRIBATION_READY для MediaTask #{media_task_id}")
+        if event.event_type == EventTypeChoices.GPT_RESULT_READY:
+            print(f"Обнаружено событие GPT_RESULT_READY для MediaTask #{media_task_id}")
+            save_excel_task.delay(media_task_id)
+            event.delete()
+            print(f"Удалено событие GPT_RESULT_READY для MediaTask #{media_task_id}")
+
 
 
         else:
@@ -206,7 +192,7 @@ def transcribe_task(media_task_id):
         media_obj.audio_duration_seconds_nexara = duration
         media_obj.nexara_completed_at = timezone.now()
         media_obj.transcribation_path = transcribation_url
-        media_obj.status = MediaTaskStatusChoices.SUCCESS
+        media_obj.status = MediaTaskStatusChoices.TRANSCRIBATION_SUCCESS
         media_obj.save()
 
         # --- Создаём OutboxEvent ---
@@ -361,117 +347,6 @@ def upload_task(media_task_id):
 
 
 
-@celery_app.task(queue="processing")
-def save_excel_to_yandex_task(media_task_id):
-    # === S3 Конфигурация ===
-    AWS_ACCESS_KEY_ID = settings.AWS_ACCESS_KEY_ID
-    AWS_SECRET_ACCESS_KEY = settings.AWS_SECRET_ACCESS_KEY
-    BUCKET_NAME = settings.BUCKET_NAME
-    REGION = settings.REGION
-    ENDPOINT_URL = settings.ENDPOINT_URL
-
-    try:
-        media_obj = MediaTask.objects.get(id=media_task_id)
-        file_base = media_obj.audio_title_saved
-
-        if not file_base:
-            print(f"❌ Нет названия файла у MediaTask #{media_obj.id}")
-            return
-
-        gpt_result = media_obj.gpt_result
-        if not gpt_result:
-            print(f"❌ Нет gpt_result от GPT для MediaTask #{media_obj.id}")
-            return
-
-        try:
-            parsed_json = json.loads(gpt_result)
-        except json.JSONDecodeError as e:
-            print(f"❌ Ошибка парсинга gpt_result: {e}")
-            return
-
-        # === Подготовка путей ===
-        os.makedirs(os.path.join(settings.MEDIA_ROOT, "excel_uploads"), exist_ok=True)
-        local_excel_file_path = os.path.join(settings.MEDIA_ROOT, "excel_uploads", f"{file_base}.xlsx")
-        object_name = f"excel_uploads/{file_base}.xlsx"
-
-        # === Создание Excel ===
-        workbook = xlsxwriter.Workbook(local_excel_file_path)
-        worksheet = workbook.add_worksheet("Ответы")
-
-        # Форматы
-        header_format = workbook.add_format({
-            "bold": True, "bg_color": "#D9E1F2",
-            "align": "center", "valign": "vcenter",
-            "border": 1
-        })
-        cell_format = workbook.add_format({
-            "text_wrap": True,
-            "valign": "top",
-            "border": 1
-        })
-
-        # Заголовки
-        worksheet.write(0, 0, "№", header_format)
-        worksheet.write(0, 1, "Ответ", header_format)
-
-        # Заполнение строк
-        row = 1
-        for key in sorted(parsed_json.keys(), key=lambda x: int(x)):
-            answer = parsed_json[key]
-            worksheet.write(row, 0, key, cell_format)
-            worksheet.write(row, 1, answer, cell_format)
-            row += 1
-
-        # Настройка ширины колонок
-        worksheet.set_column(0, 0, 5)
-        worksheet.set_column(1, 1, 100)
-
-        workbook.close()
-        print(f"💾 Excel-файл успешно создан: {local_excel_file_path}")
-
-        # === Загрузка в Яндекс Object Storage ===
-        print(f"📤 Загружаем файл {object_name} в хранилище...")
-
-        session = boto3.session.Session()
-        s3_client = session.client(
-            service_name="s3",
-            aws_access_key_id=AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-            endpoint_url=ENDPOINT_URL,
-            region_name=REGION
-        )
-
-        with open(local_excel_file_path, "rb") as f:
-            s3_client.put_object(Bucket=BUCKET_NAME, Key=object_name, Body=f)
-
-        public_url = f"{ENDPOINT_URL}/{BUCKET_NAME}/{object_name}"
-        media_obj.excel_path = public_url
-        media_obj.save(update_fields=["excel_path"])
-
-        print(f"✅ Excel-файл загружен в Яндекс S3: {public_url}")
-
-        # === OutboxEvent ===
-        OutboxEvent.objects.create(
-            media_task=media_obj,
-            event_type=EventTypeChoices.EXCEL_FILE_SAVED_TO_YANDEX,
-            payload={
-                "filename": f"{file_base}.xlsx",
-                "storage_url": public_url,
-                "uploaded_by": "system_task",
-            }
-        )
-
-        print(f"📨 OutboxEvent EXCEL_FILE_SAVED_TO_YANDEX создан для MediaTask #{media_task_id}")
-
-    except MediaTask.DoesNotExist:
-        print(f"❌ MediaTask #{media_task_id} не найден")
-
-    except (BotoCoreError, ClientError) as e:
-        print(f"❌ Ошибка при загрузке в S3: {e}")
-
-    except Exception as e:
-        print(f"❌ Общая ошибка: {e}")
-
 
 @celery_app.task(queue="processing")
 def gpt_task(media_task_id):
@@ -600,7 +475,7 @@ def gpt_task(media_task_id):
         # --- Сохраняем результат ---
         media_obj.gpt_raw_response = gpt_raw_text
         media_obj.gpt_result = json.dumps(gpt_json, ensure_ascii=False, indent=2) if gpt_json else None
-        media_obj.status = MediaTaskStatusChoices.SUCCESS
+        media_obj.status = MediaTaskStatusChoices.DATA_EXTRACTION_SUCCESS
         media_obj.save(update_fields=["gpt_raw_response", "gpt_result", "status"])
 
         # --- OutboxEvent ---
@@ -618,3 +493,145 @@ def gpt_task(media_task_id):
     except Exception as e:
         print(f"❌ Ошибка при работе с gpt_task: {e}")
 
+
+
+@celery_app.task(queue="processing")
+def save_excel_task(media_task_id):
+
+    # === S3 Конфигурация ===
+    AWS_ACCESS_KEY_ID = settings.AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY = settings.AWS_SECRET_ACCESS_KEY
+    BUCKET_NAME = settings.BUCKET_NAME
+    REGION = settings.REGION
+    ENDPOINT_URL = settings.ENDPOINT_URL
+
+    try:
+        media_obj = MediaTask.objects.get(id=media_task_id)
+        media_obj.status = MediaTaskStatusChoices.SAVE_EXCEL_START
+        file_base = media_obj.audio_title_saved
+
+        if not file_base:
+            print(f"❌ Нет названия файла у MediaTask #{media_obj.id}")
+            return
+
+        gpt_result = media_obj.gpt_result
+        if not gpt_result:
+            print(f"❌ Нет gpt_result от GPT для MediaTask #{media_obj.id}")
+            return
+
+        try:
+            parsed_json = json.loads(gpt_result)
+        except json.JSONDecodeError as e:
+            print(f"❌ Ошибка парсинга gpt_result: {e}")
+            return
+
+        # === Загружаем вопросы из шаблона ===
+        template = getattr(media_obj, "cast_template", None)
+        if not template or not template.questions:
+            print(f"⚠️ У MediaTask #{media_obj.id} нет шаблона или вопросов")
+            questions_dict = {}
+        else:
+            # поле questions — это JSONField, может быть dict или str
+            if isinstance(template.questions, dict):
+                questions_dict = template.questions
+            elif isinstance(template.questions, str):
+                try:
+                    questions_dict = json.loads(template.questions)
+                except json.JSONDecodeError:
+                    print("⚠️ Ошибка парсинга JSON вопросов")
+                    questions_dict = {}
+            else:
+                print("⚠️ Неожиданный тип данных в questions")
+                questions_dict = {}
+
+        # === Подготовка путей ===
+        os.makedirs(os.path.join(settings.MEDIA_ROOT, "excel_uploads"), exist_ok=True)
+        local_excel_file_path = os.path.join(
+            settings.MEDIA_ROOT, "excel_uploads", f"{file_base}.xlsx"
+        )
+        object_name = f"excel_uploads/{file_base}.xlsx"
+
+        # === Создание Excel ===
+        workbook = xlsxwriter.Workbook(local_excel_file_path)
+        worksheet = workbook.add_worksheet("Ответы")
+
+        # Форматы
+        header_format = workbook.add_format({
+            "bold": True,
+            "bg_color": "#D9E1F2",
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1,
+        })
+        cell_format = workbook.add_format({
+            "text_wrap": True,
+            "valign": "top",
+            "border": 1,
+        })
+
+        # Заголовки
+        worksheet.write(0, 0, "№", header_format)
+        worksheet.write(0, 1, "Вопрос", header_format)
+        worksheet.write(0, 2, "Ответ", header_format)
+
+        # Заполнение строк
+        row = 1
+        for key in sorted(parsed_json.keys(), key=lambda x: int(x)):
+            answer = parsed_json[key]
+            question_text = questions_dict.get(key, "— Вопрос не найден —")
+            worksheet.write(row, 0, key, cell_format)
+            worksheet.write(row, 1, question_text, cell_format)
+            worksheet.write(row, 2, answer, cell_format)
+            row += 1
+
+        # Настройка ширины колонок
+        worksheet.set_column(0, 0, 5)     # №
+        worksheet.set_column(1, 1, 120)   # Вопрос
+        worksheet.set_column(2, 2, 100)   # Ответ
+
+        workbook.close()
+        print(f"💾 Excel-файл успешно создан: {local_excel_file_path}")
+
+        # === Загрузка в Яндекс Object Storage ===
+        print(f"📤 Загружаем файл {object_name} в хранилище...")
+
+        session = boto3.session.Session()
+        s3_client = session.client(
+            service_name="s3",
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            endpoint_url=ENDPOINT_URL,
+            region_name=REGION,
+        )
+
+        with open(local_excel_file_path, "rb") as f:
+            s3_client.put_object(Bucket=BUCKET_NAME, Key=object_name, Body=f)
+
+        public_url = f"{ENDPOINT_URL}/{BUCKET_NAME}/{object_name}"
+        media_obj.excel_path = public_url
+        media_obj.status = MediaTaskStatusChoices.SAVE_EXCEL_FINISH
+        media_obj.save(update_fields=["excel_path", "status"])
+
+        print(f"✅ Excel-файл загружен в Яндекс S3: {public_url}")
+
+        # === OutboxEvent ===
+        OutboxEvent.objects.create(
+            media_task=media_obj,
+            event_type=EventTypeChoices.EXCEL_FILE_SAVED_TO_YANDEX,
+            payload={
+                "filename": f"{file_base}.xlsx",
+                "storage_url": public_url,
+                "uploaded_by": "system_task",
+            },
+        )
+
+        print(f"📨 OutboxEvent EXCEL_FILE_SAVED_TO_YANDEX создан для MediaTask #{media_task_id}")
+
+    except MediaTask.DoesNotExist:
+        print(f"❌ MediaTask #{media_task_id} не найден")
+
+    except (BotoCoreError, ClientError) as e:
+        print(f"❌ Ошибка при загрузке в S3: {e}")
+
+    except Exception as e:
+        print(f"❌ Общая ошибка: {e}")

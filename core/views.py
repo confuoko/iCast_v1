@@ -66,7 +66,11 @@ class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
             pk=self.kwargs["pk"],
             integration=self.request.user.integration
         )
-        return MediaTask.objects.filter(project=self.project)
+        return (
+            MediaTask.objects
+            .filter(project=self.project)
+            .order_by("-video_local_uploaded_at")  # сортируем по убыванию даты создания
+        )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
