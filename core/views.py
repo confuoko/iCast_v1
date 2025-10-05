@@ -2,6 +2,7 @@ import os
 
 from django.contrib import messages
 from django.utils import timezone
+from mutagen import File as MutagenFile
 
 from django import forms
 from django.conf import settings
@@ -15,7 +16,7 @@ from django.views.generic import CreateView, TemplateView, ListView, UpdateView
 from django.urls import reverse_lazy
 from django.views.generic.edit import FormMixin
 
-from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate, Project
+from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate, Project, MediaTaskStatusChoices
 
 
 class HomeView(LoginRequiredMixin, ListView):
@@ -74,6 +75,9 @@ class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
         return context
 
     def post(self, request, *args, **kwargs):
+        from boto3.session import Session
+        from botocore.exceptions import BotoCoreError, ClientError
+
         self.project = get_object_or_404(
             Project,
             pk=self.kwargs["pk"],
@@ -85,67 +89,77 @@ class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
             original_name = file.name
             ext = os.path.splitext(original_name)[1].lower().lstrip('.')
 
-            # генерируем имя и путь для сохранения файла
-            saved_name = f"{timezone.now().strftime('%Y%m%d%H%M%S')}_{original_name}"
-            save_path = os.path.join('media_uploads', saved_name)
-            full_path = os.path.join(settings.MEDIA_ROOT, save_path)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-
-            with open(full_path, 'wb+') as destination:
-                for chunk in file.chunks():
-                    destination.write(chunk)
-
-            # общие аргументы для MediaTask (с интеграцией!)
-            create_kwargs = {
-                "project": self.project,
-                "integration": self.request.user.integration,
-            }
-
-            if ext in ["mp4", "mov", "avi", "mkv"]:
-                create_kwargs.update({
-                    "video_uploaded_title": original_name,
-                    "video_title_saved": saved_name,
-                    "video_extension": ext,
-                    "video_storage_url": os.path.join(settings.MEDIA_URL, save_path),
-                })
-                media_task = MediaTask.objects.create(**create_kwargs)
-                OutboxEvent.objects.create(
-                    media_task=media_task,
-                    event_type=EventTypeChoices.VIDEO_UPLOADED_LOCAL,
-                    payload={
-                        "filename": saved_name,
-                        "extension": ext,
-                        "uploaded_by": request.user.username,
-                        "project_id": self.project.pk,
-                    }
-                )
-
-            elif ext == "wav":
-                create_kwargs.update({
-                    "audio_uploaded_title": original_name,
-                    "audio_title_saved": saved_name,
-                    "audio_extension_uploaded": ext,
-                    "audio_storage_url": os.path.join(settings.MEDIA_URL, save_path),
-                })
-                media_task = MediaTask.objects.create(**create_kwargs)
-                OutboxEvent.objects.create(
-                    media_task=media_task,
-                    event_type=EventTypeChoices.AUDIO_WAV_UPLOADED,
-                    payload={
-                        "filename": saved_name,
-                        "extension": ext,
-                        "uploaded_by": request.user.username,
-                        "project_id": self.project.pk,
-                    }
-                )
-            else:
-                messages.error(request, f"Неподдерживаемый тип файла: {ext}")
+            if ext != "wav":
+                messages.error(request, f"Пока неподдерживаемый тип файла: {ext}")
                 return self.form_invalid(form)
 
-            # редирект на страницу успеха с pk созданной задачи
-            return redirect('upload_success', pk=media_task.pk)
+            # --- Генерация имени и пути для объекта в бакете ---
+            saved_name = f"{timezone.now().strftime('%Y%m%d%H%M%S')}_{original_name}"
+            s3_object_path = f"media_uploads/{saved_name}"
+
+            try:
+
+                # --- S3 клиент ---
+                session = Session()
+                s3_client = session.client(
+                    service_name="s3",
+                    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                    endpoint_url=settings.ENDPOINT_URL,
+                    region_name=settings.REGION
+                )
+
+
+                s3_client.put_object(
+                    Bucket=settings.BUCKET_NAME,
+                    Key=s3_object_path,
+                    Body=file.read()
+                )
+
+                # --- Публичный URL для доступа к файлу ---
+                public_url = f"{settings.ENDPOINT_URL}/{settings.BUCKET_NAME}/{s3_object_path}"
+
+                # --- Создание MediaTask ---
+                media_task = MediaTask.objects.create(
+                    project=self.project,
+                    integration=request.user.integration,
+                    audio_uploaded_title=original_name,
+                    audio_title_saved=saved_name,
+                    audio_extension_uploaded=ext,
+                    audio_storage_url=public_url,
+                    #audio_duration_seconds=duration_seconds,
+                    status=MediaTaskStatusChoices.LOADED
+                )
+
+                # --- Создание события OutboxEvent ---
+                OutboxEvent.objects.create(
+                    media_task=media_task,
+                    event_type=EventTypeChoices.AUDIO_UPLOADED_TO_YANDEX,
+                    payload={
+                        "filename": saved_name,
+                        "extension": ext,
+                        "uploaded_by": request.user.username,
+                        "project_id": self.project.pk,
+                        "storage_url": public_url,
+                    }
+                )
+
+                # --- Редирект после успешной загрузки ---
+                return redirect("upload_success", pk=media_task.pk)
+
+            except (BotoCoreError, ClientError) as e:
+                messages.error(request, f"Ошибка загрузки в хранилище: {e}")
+                return self.form_invalid(form)
+
+            except Exception as e:
+                messages.error(request, f"Ошибка при обработке: {e}")
+                return self.form_invalid(form)
 
         return self.form_invalid(form)
+
+
+
+
 
 class MainView(LoginRequiredMixin, View):
     template_name = 'main.html'
@@ -299,7 +313,7 @@ class MyTemplatesView(LoginRequiredMixin, ListView):
 
     def get_queryset(self):
         # Если нужно, можно фильтровать по пользователю или интеграции
-        return CastTemplate.objects.all()
+        return CastTemplate.objects.filter(integration = self.request.user.integration)
 
 
 class MyTasksView(LoginRequiredMixin, ListView):

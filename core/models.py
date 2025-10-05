@@ -96,6 +96,10 @@ class CastTemplate(models.Model):
         default=TemplateTypeChoices.CUSTOM,
         verbose_name="Тип шаблона"
     )
+    default = models.BooleanField(
+        default=False,
+        verbose_name="Базовый шаблон"
+    )
 
     def __str__(self):
         return f"Шаблон (ID {self.id})"
@@ -103,7 +107,7 @@ class CastTemplate(models.Model):
 
 class MediaTaskStatusChoices(models.TextChoices):
     LOADED = "loaded", "Загружен"
-    TRANSCRIBATION = "transcribation", "Транскрибация выполняется"
+    PROCESS_TRANSCRIBATION = "process_transcribation", "Транскрибация выполняется"
     DATA_EXTRACTION = "data_extraction", "Извлечение данных выполняется"
     SUCCESS = "success", "Успешно завершено"
     FAILED = "failed", "Ошибка"
@@ -304,6 +308,7 @@ class EventTypeChoices(models.TextChoices):
     VIDEO_UPLOADED_LOCAL = "video_uploaded", "Видео загружено"
     VIDEO_UPLOADED_YANDEX = "video_uploaded_yandex", "Видео загружено в хранилище Яндекс"
 
+    AUDIO_UPLOADED_TO_YANDEX = "audio_uploaded_to_yandex", "Аудио загружено в хранилище Яндекс"
     AUDIO_WAV_UPLOADED = "audio_wav_uploaded", "Аудио WAV загружено"
     AUDIO_SEND_TO_YANDEX = "audio_send_to_yandex", "Аудио отправлено в хранилище Яндекс"
 

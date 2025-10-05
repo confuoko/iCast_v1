@@ -14,7 +14,7 @@ from django.utils import timezone
 from yandex_cloud_ml_sdk import YCloudML
 
 
-from core.models import OutboxEvent, EventTypeChoices, MediaTask
+from core.models import OutboxEvent, EventTypeChoices, MediaTask, MediaTaskStatusChoices
 
 from backend.celery import app as celery_app
 from core.services import build_prompt
@@ -24,6 +24,20 @@ from core.services import build_prompt
 def handler_task():
     """
     Проверяет OutboxEvent и запускает задачи по нужной очереди
+        if event.event_type == EventTypeChoices.GPT_RESULT_READY:
+            print(f"📝 Запускаем сохранение Excel для MediaTask #{media_task_id}")
+            save_excel_to_yandex_task.delay(media_task_id)
+            event.delete()
+        if event.event_type == EventTypeChoices.AUDIO_WAV_UPLOADED:
+            print(f"🎧 Запускаем upload_audio_to_yandex_task для MediaTask #{media_task_id}")
+            upload_audio_to_yandex_task.delay(media_task_id)
+            event.delete()
+
+        elif event.event_type == EventTypeChoices.AUDIO_SEND_TO_YANDEX:
+            print(f"📝 Запускаем transcribe_task для MediaTask #{media_task_id}")
+            transcribe_task.delay(media_task_id)
+            event.delete()
+
     """
     print("=== Запуск handler_task ===")
 
@@ -39,42 +53,25 @@ def handler_task():
         except Exception as e:
             print(f"⚠️ Ошибка при выводе события {event.id}: {e}")
 
-        if event.event_type == EventTypeChoices.GPT_RESULT_READY:
-            print(f"📝 Запускаем сохранение Excel для MediaTask #{media_task_id}")
-            save_excel_to_yandex_task.delay(media_task_id)
-            event.delete()
-        if event.event_type == EventTypeChoices.AUDIO_WAV_UPLOADED:
-            print(f"🎧 Запускаем upload_audio_to_yandex_task для MediaTask #{media_task_id}")
-            upload_audio_to_yandex_task.delay(media_task_id)
-            event.delete()
 
-        elif event.event_type == EventTypeChoices.AUDIO_SEND_TO_YANDEX:
-            print(f"📝 Запускаем transcribe_task для MediaTask #{media_task_id}")
-            transcribe_task.delay(media_task_id)
-            event.delete()
+        if event.event_type == EventTypeChoices.TEMPLATE_SELECTED:
+            print(f"Обнаружен событие TEMPLATE_SELECTED для MediaTask #{media_task_id}")
 
-        elif event.event_type == EventTypeChoices.TEMPLATE_SELECTED:
-            print(f"🧩 Обнаружен TEMPLATE_SELECTED для MediaTask #{media_task_id} — проверяю готовность транскрибации...")
-
-            audio_ready_event = (
+            audio_uploaded_event = (
                 OutboxEvent.objects
                 .filter(
                     media_task_id=media_task_id,
-                    event_type=EventTypeChoices.AUDIO_TRANSCRIBATION_READY,
+                    event_type=EventTypeChoices.AUDIO_UPLOADED_TO_YANDEX,
                 )
                 .order_by("id")
                 .first()
             )
-
-            if audio_ready_event:
-                print(f"✅ Транскрипт готов. Запускаю gpt_task для MediaTask #{media_task_id}")
-                gpt_task.delay(media_task_id)
-
-                # удаляем оба события: текущий TEMPLATE_SELECTED и найденный AUDIO_TRANSCRIBATION_READY
-                audio_ready_event.delete()
-                event.delete()
+            if audio_uploaded_event:
+                transcribe_task.delay(media_task_id)
             else:
-                print(f"⏳ Транскрипт ещё не готов для MediaTask #{media_task_id}. Ждём событие AUDIO_TRANSCRIBATION_READY.")
+                print(f"Нет AUDIO_UPLOADED_TO_YANDEX для MediaTask #{media_task_id}, ждем...")
+
+
         else:
             print(f"⚠️ Необработанный тип события: {event.event_type!r}")
 
@@ -173,18 +170,20 @@ def transcribe_task(media_task_id):
     """
     Задача по транскрибации аудио через Nexara.
     """
-    print("=== 🚀 Запуск задачи transcribe_task ===")
+    print("=== Запуск задачи transcribe_task ===")
     NEXARA_API_KEY = settings.NEXARA_API_KEY
 
     if NEXARA_API_KEY:
-        print("✅ NEXARA_API_KEY найден!")
+        print("NEXARA_API_KEY найден!")
     else:
-        print("❌ NEXARA_API_KEY не найден, задача не будет выполнена")
+        print("NEXARA_API_KEY не найден, задача не будет выполнена")
         return
 
     try:
         # 1. Получаем объект MediaTask
         media_obj = MediaTask.objects.get(id=media_task_id)
+        media_obj.status = MediaTaskStatusChoices.PROCESS_TRANSCRIBATION
+        media_obj.save()
 
         # 2. Берём ссылку на аудио-файл в хранилище Яндекс
         audio_yandex_url = media_obj.audio_storage_url
@@ -209,14 +208,13 @@ def transcribe_task(media_task_id):
 
         # 4. Делаем POST-запрос
         response = requests.post(url, headers=headers, data=data, files=files)
-        print(f"🌐 Nexara ответила со статусом {response.status_code}")
+        print(f"Nexara ответила со статусом {response.status_code}")
 
         if response.status_code == 200:
             result = response.json()
-            print("✅ Результат получен, сохраняем в MediaTask")
+            print("Результат получен, сохраняем в MediaTask")
 
             # Сохраняем основные поля
-            media_obj.diarization_text = result.get("text", "")
             media_obj.diarization_segments = result.get("segments", [])
             media_obj.audio_duration_seconds = result.get("duration")
             media_obj.nexara_completed_at = timezone.now()
