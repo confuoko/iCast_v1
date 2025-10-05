@@ -1,124 +1,121 @@
 {% extends 'base.html' %}
 
-{% block title %}{{ project.project_title }} - Задачи{% endblock %}
+{% block title %}
+{{ project.project_title }} - Задачи
+{% endblock %}
 
 {% block content %}
 <h2 class="mb-4">Задачи проекта: {{ project.project_title }}</h2>
 
 <a href="{% url 'home' %}" class="btn btn-outline-secondary btn-sm mb-3">
-    ← Назад к проектам
+  ← Назад к проектам
 </a>
 
 <!-- === Форма загрузки файла === -->
 <form method="post" enctype="multipart/form-data" class="mb-4 p-3 border rounded shadow-sm bg-light">
-    {% csrf_token %}
-    {{ form.file.label_tag }}
-    {{ form.file }}
-    {% if form.file.help_text %}
+  {% csrf_token %}
+  {{ form.file.label_tag }}
+  {{ form.file }}
+  {% if form.file.help_text %}
     <div class="form-text small text-muted">{{ form.file.help_text }}</div>
-    {% endif %}
-    <button class="btn btn-primary mt-2" type="submit">
-        ➕ Загрузить файл
-    </button>
+  {% endif %}
+  <button class="btn btn-primary mt-2" type="submit">
+    ➕ Загрузить файл
+  </button>
 </form>
 
 <style>
-    .icon-excel {
-        color: #28c76f;
-        text-shadow: 0 0 4px rgba(40, 199, 111, 0.3);
-    }
-
-    .icon-pdf {
-        color: #f44336;
-        text-shadow: 0 0 4px rgba(244, 67, 54, 0.3);
-    }
-
-    .icon-disabled {
-        opacity: 0.25;
-        filter: grayscale(40%);
-    }
-
-    .task-icons i {
-        font-size: 1.6rem;
-        transition: transform 0.15s ease, text-shadow 0.15s ease;
-    }
-
-    .task-icons a:hover i {
-        transform: scale(1.2);
-        text-shadow: 0 0 6px rgba(0, 0, 0, 0.3);
-    }
-
-    .task-card:hover {
-        background-color: #f8fff9;
-        transition: background-color 0.15s ease;
-    }
+  .icon-excel {
+    color: #28c76f;
+    text-shadow: 0 0 4px rgba(40, 199, 111, 0.3);
+  }
+  .icon-pdf {
+    color: #f44336;
+    text-shadow: 0 0 4px rgba(244, 67, 54, 0.3);
+  }
+  .icon-disabled {
+    opacity: 0.25;
+    filter: grayscale(40%);
+  }
+  .task-icons i {
+    font-size: 1.6rem;
+    transition: transform 0.15s ease, text-shadow 0.15s ease;
+  }
+  .task-icons a:hover i {
+    transform: scale(1.2);
+    text-shadow: 0 0 6px rgba(0, 0, 0, 0.3);
+  }
+  .task-card:hover {
+    background-color: #f8fff9;
+    transition: background-color 0.15s ease;
+  }
 </style>
 
 <div class="d-flex flex-column gap-3">
-    {% for task in tasks %}
+  {% for task in tasks %}
     <div class="card p-3 shadow-sm rounded-3 task-card">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <strong class="h5 mb-0">
-                {{ task.audio_uploaded_title|default:task.video_uploaded_title|default:"Без названия" }}
-            </strong>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <strong class="h5 mb-0">
+          {{ task.audio_uploaded_title|default:task.video_uploaded_title|default:"Без названия" }}
+        </strong>
 
-            <span class="badge
-    {% if task.status == 'loaded' %}
-      bg-secondary
-    {% elif task.status == 'process_transcribation' %}
-      bg-warning text-dark
-    {% elif task.status == 'process_data_extraction' %}
-      bg-warning text-dark
-    {% elif task.status == 'data_extraction_success' %}
-      bg-info text-dark
-    {% elif task.status == 'save_excel_start' %}
-      bg-primary
-    {% elif task.status == 'save_excel_finish' %}
-      bg-success
-    {% elif task.status == 'success' %}
-      bg-success
-    {% elif task.status == 'failed' %}
-      bg-danger
-    {% else %}
-      bg-light text-dark
-    {% endif %}
-  ">
-    {{ task.get_status_display }}
-  </span>
+        <span class="badge
+          {% if task.status == 'loaded' %}
+            bg-secondary
+          {% elif task.status == 'process_transcribation' %}
+            bg-warning text-dark
+          {% elif task.status == 'process_data_extraction' %}
+            bg-warning text-dark
+          {% elif task.status == 'data_extraction_success' %}
+            bg-info text-dark
+          {% elif task.status == 'save_excel_start' %}
+            bg-primary
+          {% elif task.status == 'save_excel_finish' %}
+            bg-success
+          {% elif task.status == 'success' %}
+            bg-success
+          {% elif task.status == 'failed' %}
+            bg-danger
+          {% else %}
+            bg-light text-dark
+          {% endif %}
+        ">
+          {{ task.get_status_display }}
+        </span>
+      </div>
+
+      <div class="small text-muted mb-2">
+        <div>
+          Загружено: {{ task.audio_local_uploaded_at|default:task.video_local_uploaded_at|date:"d.m.Y H:i" }}
         </div>
-
-        <div class="small text-muted mb-2">
-            <div>Загружено: {{ task.audio_local_uploaded_at|default:task.video_local_uploaded_at|date:"d.m.Y H:i" }}
-            </div>
-            <div>Длительность: {{ task.audio_duration_seconds_nexara|default:"—" }} сек</div>
+        <div>
+          Длительность: {{ task.audio_duration_seconds_nexara|default:"—" }} сек
         </div>
+      </div>
 
-        <div class="task-icons d-flex gap-4 mt-2">
-            <!-- Excel -->
-            {% if task.excel_path %}
-            <a href="{{ task.excel_path }}" target="_blank" title="Скачать Excel">
-                <i class="bi bi-file-earmark-excel icon-excel"></i>
-            </a>
-            {% else %}
-            <i class="bi bi-file-earmark-excel icon-excel icon-disabled"></i>
-            {% endif %}
+      <div class="task-icons d-flex gap-4 mt-2">
+        <!-- Excel -->
+        {% if task.excel_path %}
+          <a href="{{ task.excel_path }}" target="_blank" title="Скачать Excel">
+            <i class="bi bi-file-earmark-excel icon-excel"></i>
+          </a>
+        {% else %}
+          <i class="bi bi-file-earmark-excel icon-excel icon-disabled"></i>
+        {% endif %}
 
-            <!-- PDF -->
-            {% if task.transcribation_path %}
-            <a href="{{ task.transcribation_path }}" target="_blank" title="Скачать Транскрибацию .txt">
-                <i class="bi bi-file-earmark-pdf icon-pdf"></i>
-            </a>
-            {% else %}
-            <i class="bi bi-file-earmark-pdf icon-pdf icon-disabled"></i>
-            {% endif %}
-
-
-        </div>
+        <!-- PDF / Транскрипт -->
+        {% if task.transcribation_path %}
+          <a href="{{ task.transcribation_path }}" target="_blank" title="Скачать Транскрибацию .txt">
+            <i class="bi bi-file-earmark-pdf icon-pdf"></i>
+          </a>
+        {% else %}
+          <i class="bi bi-file-earmark-pdf icon-pdf icon-disabled"></i>
+        {% endif %}
+      </div>
     </div>
-    {% empty %}
+  {% empty %}
     <p class="text-muted">В этом проекте пока нет задач.</p>
-    {% endfor %}
+  {% endfor %}
 </div>
 
-<!-- === Автоматическое обновление страницы каждые 3 секунды === -->
 {% endblock %}

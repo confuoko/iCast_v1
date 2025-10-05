@@ -114,11 +114,7 @@ class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
                 )
 
 
-                s3_client.put_object(
-                    Bucket=settings.BUCKET_NAME,
-                    Key=s3_object_path,
-                    Body=file.read()
-                )
+                s3_client.upload_fileobj(file, settings.BUCKET_NAME, s3_object_path)
 
                 # --- Публичный URL для доступа к файлу ---
                 public_url = f"{settings.ENDPOINT_URL}/{settings.BUCKET_NAME}/{s3_object_path}"
