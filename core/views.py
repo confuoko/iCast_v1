@@ -1,9 +1,10 @@
 import os
 
+from botocore.exceptions import BotoCoreError, ClientError
 from django.contrib import messages
 from django.utils import timezone
 from mutagen import File as MutagenFile
-
+from boto3.session import Session
 from django import forms
 from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -17,7 +18,7 @@ from django.urls import reverse_lazy
 from django.views.generic.edit import FormMixin
 
 from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate, Project, MediaTaskStatusChoices, \
-    IntegrationSettings, Integration
+    IntegrationSettings, UploadChoices
 
 
 class HomeView(LoginRequiredMixin, ListView):
@@ -64,110 +65,172 @@ class VideoUploadForm(forms.Form):
     )
 
 
+
 class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
     model = MediaTask
     template_name = "project_tasks.html"
     context_object_name = "tasks"
-    form_class = VideoUploadForm  # форма загрузки файла
+    form_class = VideoUploadForm
 
     def get_queryset(self):
-        # получаем проект по pk и фильтруем задачи по нему
         self.project = get_object_or_404(
             Project,
             pk=self.kwargs["pk"],
             integration=self.request.user.integration
         )
-        return (
-            MediaTask.objects
-            .filter(project=self.project)
-            .order_by("-video_local_uploaded_at")  # сортируем по убыванию даты создания
-        )
+        return MediaTask.objects.filter(project=self.project).order_by("-video_local_uploaded_at")
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["project"] = self.project
         context["form"] = self.get_form()
-        context['integration'] = self.request.user.integration
         return context
 
     def post(self, request, *args, **kwargs):
-        from boto3.session import Session
-        from botocore.exceptions import BotoCoreError, ClientError
-
         self.project = get_object_or_404(
             Project,
             pk=self.kwargs["pk"],
-            integration=self.request.user.integration
+            integration=request.user.integration
         )
         form = self.get_form()
-        if form.is_valid():
-            file = form.cleaned_data['file']
-            original_name = file.name
-            ext = os.path.splitext(original_name)[1].lower().lstrip('.')
 
-            if ext != "wav":
-                messages.error(request, f"Пока неподдерживаемый тип файла: {ext}")
-                return self.form_invalid(form)
+        if not form.is_valid():
+            return self.form_invalid(form)
 
-            # --- Генерация имени и пути для объекта в бакете ---
-            saved_name = f"{timezone.now().strftime('%Y%m%d%H%M%S')}_{original_name}"
-            s3_object_path = f"media_uploads/{saved_name}"
+        file = form.cleaned_data["file"]
+        original_name = file.name
+        ext = original_name.split(".")[-1].lower()
 
-            try:
+        if ext != "wav":
+            messages.error(request, f"❌ Пока неподдерживаемый тип файла: {ext}")
+            return self.form_invalid(form)
 
-                # --- S3 клиент ---
-                session = Session()
-                s3_client = session.client(
-                    service_name="s3",
-                    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                    endpoint_url=settings.ENDPOINT_URL,
-                    region_name=settings.REGION
+        try:
+            integration_settings = request.user.integration.settings
+        except IntegrationSettings.DoesNotExist:
+            messages.error(request, "❌ Не найдены настройки интеграции.")
+            return self.form_invalid(form)
+
+        upload_mode = integration_settings.upload_mode
+        saved_name = f"{timezone.now().strftime('%Y%m%d%H%M%S')}_{original_name}"
+        s3_key = f"media_uploads/{saved_name}"
+
+        try:
+            session = Session()
+            s3_client = session.client(
+                service_name="s3",
+                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                endpoint_url=settings.ENDPOINT_URL,
+                region_name=settings.REGION
+            )
+
+            if upload_mode == UploadChoices.FULL:
+                print("📦 Загрузка файла целиком (FULL)...")
+                s3_client.upload_fileobj(file, settings.BUCKET_NAME, s3_key)
+                public_url = f"{settings.ENDPOINT_URL}/{settings.BUCKET_NAME}/{s3_key}"
+
+            elif upload_mode == UploadChoices.PARTS:
+                print("🧩 Составная загрузка (PARTS) начата...")
+
+                init_response = s3_client.create_multipart_upload(
+                    Bucket=settings.BUCKET_NAME,
+                    Key=s3_key,
+                    ACL="public-read"
+                )
+                upload_id = init_response["UploadId"]
+                print(f"✅ Upload ID: {upload_id}")
+
+                part_size = 40 * 1024 * 1024  # 40MB
+                total_size = file.size
+                total_parts = (total_size + part_size - 1) // part_size
+                total_mb = total_size / (1024 * 1024)
+
+                print(f"📁 Общий размер файла: {total_mb:.2f} MB")
+                print(f"🔢 Будет разбит на {total_parts} частей (~{part_size // (1024 * 1024)}MB каждая)")
+
+                offset = 0
+                part_number = 1
+                parts = []
+
+                while offset < total_size:
+                    file.seek(offset)
+                    chunk = file.read(part_size)
+
+                    if len(chunk) < 5 * 1024 * 1024 and offset + len(chunk) != total_size:
+                        raise ValueError(f"❌ Размер части слишком мал: {len(chunk)} байт")
+
+                    print(f"📤 Загружаем часть {part_number}/{total_parts} ({len(chunk)} байт)...")
+
+                    response = s3_client.upload_part(
+                        Bucket=settings.BUCKET_NAME,
+                        Key=s3_key,
+                        PartNumber=part_number,
+                        UploadId=upload_id,
+                        Body=chunk
+                    )
+
+                    parts.append({
+                        "ETag": response["ETag"],
+                        "PartNumber": part_number
+                    })
+
+                    print(f"✅ Часть {part_number} загружена. ETag: {response['ETag']}")
+
+                    offset += len(chunk)
+                    part_number += 1
+
+                print("📦 Завершаем составную загрузку...")
+
+                s3_client.complete_multipart_upload(
+                    Bucket=settings.BUCKET_NAME,
+                    Key=s3_key,
+                    UploadId=upload_id,
+                    MultipartUpload={"Parts": parts}
                 )
 
+                public_url = f"{settings.ENDPOINT_URL}/{settings.BUCKET_NAME}/{s3_key}"
+                print(f"🎉 Загрузка завершена: {public_url}")
 
-                s3_client.upload_fileobj(file, settings.BUCKET_NAME, s3_object_path)
-
-                # --- Публичный URL для доступа к файлу ---
-                public_url = f"{settings.ENDPOINT_URL}/{settings.BUCKET_NAME}/{s3_object_path}"
-
-                # --- Создание MediaTask ---
-                media_task = MediaTask.objects.create(
-                    project=self.project,
-                    integration=request.user.integration,
-                    audio_uploaded_title=original_name,
-                    audio_title_saved=saved_name,
-                    audio_extension_uploaded=ext,
-                    audio_storage_url=public_url,
-                    #audio_duration_seconds=duration_seconds,
-                    status=MediaTaskStatusChoices.LOADED
-                )
-
-                # --- Создание события OutboxEvent ---
-                OutboxEvent.objects.create(
-                    media_task=media_task,
-                    event_type=EventTypeChoices.AUDIO_UPLOADED_TO_YANDEX,
-                    payload={
-                        "filename": saved_name,
-                        "extension": ext,
-                        "uploaded_by": request.user.username,
-                        "project_id": self.project.pk,
-                        "storage_url": public_url,
-                    }
-                )
-
-                # --- Редирект после успешной загрузки ---
-                return redirect("upload_success", pk=media_task.pk)
-
-            except (BotoCoreError, ClientError) as e:
-                messages.error(request, f"Ошибка загрузки в хранилище: {e}")
+            else:
+                messages.error(request, f"❌ Неизвестный режим загрузки: {upload_mode}")
                 return self.form_invalid(form)
 
-            except Exception as e:
-                messages.error(request, f"Ошибка при обработке: {e}")
-                return self.form_invalid(form)
+            media_task = MediaTask.objects.create(
+                project=self.project,
+                integration=request.user.integration,
+                audio_uploaded_title=original_name,
+                audio_title_saved=saved_name,
+                audio_extension_uploaded=ext,
+                audio_storage_url=public_url,
+                status=MediaTaskStatusChoices.LOADED,
+            )
 
-        return self.form_invalid(form)
+            OutboxEvent.objects.create(
+                media_task=media_task,
+                event_type=EventTypeChoices.AUDIO_UPLOADED_TO_YANDEX,
+                payload={
+                    "filename": saved_name,
+                    "extension": ext,
+                    "uploaded_by": request.user.username,
+                    "project_id": self.project.pk,
+                    "storage_url": public_url,
+                    "upload_mode": upload_mode,
+                },
+            )
+
+            return redirect("upload_success", pk=media_task.pk)
+
+        except (BotoCoreError, ClientError) as e:
+            print(f"❌ Ошибка S3: {e}")
+            messages.error(request, f"Ошибка загрузки в хранилище: {e}")
+            return self.form_invalid(form)
+
+        except Exception as e:
+            print(f"❌ Общая ошибка: {e}")
+            messages.error(request, f"Ошибка при обработке: {e}")
+            return self.form_invalid(form)
+
 
 
 

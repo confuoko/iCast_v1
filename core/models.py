@@ -22,22 +22,21 @@ class Integration(models.Model):
         return f"Интеграция для пользователя {self.user.username}"
 
 
-class TemplateTypeChoices(models.TextChoices):
+class UploadChoices(models.TextChoices):
     FULL = "full", "Full"
     PARTS = "parts", "Parts"
 
 
 class IntegrationSettings(models.Model):
-    integration = models.ForeignKey(
+    integration = models.OneToOneField(  # ✅ ВАЖНО
         Integration,
         on_delete=models.CASCADE,
-        related_name="settings",
-        verbose_name="Интеграция"
+        related_name="settings"
     )
     upload_mode = models.CharField(
         max_length=10,
-        choices=TemplateTypeChoices.choices,
-        default=TemplateTypeChoices.FULL,
+        choices=UploadChoices.choices,
+        default=UploadChoices.FULL,
         verbose_name="Режим загрузки"
     )
 
