@@ -78,97 +78,17 @@ def handler_task():
             else:
                 print(f"Нет AUDIO_UPLOADED_TO_YANDEX для MediaTask #{media_task_id}, ждем...")
 
+        if event.event_type == EventTypeChoices.AUDIO_TRANSCRIBATION_READY:
+            print(f"Обнаружен событие AUDIO_TRANSCRIBATION_READY для MediaTask #{media_task_id}")
+            gpt_task.delay(media_task_id)
+            event.delete()
+            print(f"Удалено событие AUDIO_TRANSCRIBATION_READY для MediaTask #{media_task_id}")
+
 
         else:
             print(f"⚠️ Необработанный тип события: {event.event_type!r}")
 
     return f"Processed {len(events)} events"
-
-
-@celery_app.task(queue="processing")
-def gpt_task(media_task_id):
-    """
-    Задача по выделению ключевой информации через GPT.
-    """
-    print("=== 🚀 Запуск задачи gpt_task ===")
-    try:
-        media_obj = MediaTask.objects.get(id=media_task_id)
-
-        diarization_segments = media_obj.diarization_segments
-        if isinstance(diarization_segments, str):
-            diarization_segments = json.loads(diarization_segments)
-
-        interview_text = "\n".join(
-            [f"[{seg['speaker']}] {seg['text']}" for seg in diarization_segments]
-        )
-
-        system_prompt_start = (
-            "Вы являетесь кастдев-интервьюером и задаете ряд вопросов о вашем продукте "
-            "потенциальному пользователю. Вам нужно найти ответы в данном интервью на список вопросов ниже. "
-            "Если в тексте нет ответа на вопрос — верните \"Нет ответа\". "
-            "Ответ нужно давать буквально прямыми цитатами, как их сказал пользователь, не перефразировать. "
-            "Ответ верните строго в формате JSON (только JSON, без комментариев), где ключ — номер вопроса, а значение — текст ответа.\n"
-            "Пример:\n"
-            "{\n"
-            "  \"1\": \"ответ на вопрос 1\",\n"
-            "  \"2\": \"Нет ответа\"\n"
-            "}\n\n"
-        )
-        questions_text = build_prompt()
-        user_prompt = f"Интервью:\n{interview_text}"
-
-        messages = [
-            {"role": "system", "text": system_prompt_start + questions_text},
-            {"role": "user", "text": user_prompt},
-        ]
-
-        sdk = YCloudML(
-            folder_id=settings.YANDEX_FOLDER_ID,
-            auth=settings.YANDEX_OAUTH_TOKEN,
-        )
-
-        tokenized = sdk.models.completions("yandexgpt").tokenize(messages)
-        print(f"🔢 Количество токенов: {len(tokenized)}")
-
-        result = sdk.models.completions("yandexgpt").configure(temperature=0.3).run(messages)
-
-        # result — это список Alternative, нужно взять .text
-        gpt_raw_text = result[0].text if result else "{}"
-        print(f"=== 📝 Ответ GPT ===\n{gpt_raw_text}")
-
-        # Очистка от обрамляющих ```` ``` ```` и лишних пробелов
-        gpt_cleaned_text = gpt_raw_text.strip()
-        if gpt_cleaned_text.startswith("```") and gpt_cleaned_text.endswith("```"):
-            gpt_cleaned_text = gpt_cleaned_text.strip("`").strip()
-
-        # Попробуем снова распарсить
-        try:
-            gpt_json = json.loads(gpt_cleaned_text)
-            print("✅ Успешно распарсили JSON")
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Ошибка парсинга JSON: {e}")
-            gpt_json = None
-
-        # Сохраняем как есть (сырой и/или распарсенный)
-        media_obj.gpt_raw_response = gpt_raw_text  # Оригинал, с бэктиками
-        if gpt_json:
-            # красиво сериализуем и сохраняем
-            media_obj.gpt_result = json.dumps(gpt_json, ensure_ascii=False, indent=2)
-        else:
-            media_obj.gpt_result = None
-
-        media_obj.save(update_fields=["gpt_raw_response", "gpt_result"])
-
-        OutboxEvent.objects.create(
-            media_task=media_obj,
-            event_type=EventTypeChoices.GPT_RESULT_READY,
-            payload={"media_task_id": media_task_id},
-        )
-
-    except MediaTask.DoesNotExist:
-        print(f"❌ MediaTask #{media_task_id} не найден")
-    except Exception as e:
-        print(f"❌ Ошибка при работе с gpt_task: {e}")
 
 
 def save_transcription_to_s3(media_obj, segments):
@@ -283,7 +203,7 @@ def transcribe_task(media_task_id):
 
         # --- Обновляем MediaTask ---
         media_obj.diarization_segments = segments
-        media_obj.audio_duration_seconds = duration
+        media_obj.audio_duration_seconds_nexara = duration
         media_obj.nexara_completed_at = timezone.now()
         media_obj.transcribation_path = transcribation_url
         media_obj.status = MediaTaskStatusChoices.SUCCESS
@@ -553,5 +473,148 @@ def save_excel_to_yandex_task(media_task_id):
         print(f"❌ Общая ошибка: {e}")
 
 
+@celery_app.task(queue="processing")
+def gpt_task(media_task_id):
+    """
+    Задача по выделению ключевой информации через GPT (YandexGPT).
+    """
+    print("=== Запуск задачи gpt_task ===")
 
+    try:
+        # --- Получаем MediaTask ---
+        media_obj = MediaTask.objects.get(id=media_task_id)
+        media_obj.status = MediaTaskStatusChoices.PROCESS_DATA_EXTRACTION
+        media_obj.save()
+
+        # --- Проверяем наличие пути к транскрипции ---
+        transcribation_path = media_obj.transcribation_path
+        if not transcribation_path:
+            print(f"❌ У MediaTask #{media_task_id} отсутствует transcribation_path")
+            return
+
+        print(f"📥 Загружаем файл из Object Storage: {transcribation_path}")
+
+        # === Настройки доступа ===
+        ENDPOINT_URL = "https://storage.yandexcloud.net"
+        BUCKET_NAME = "bucketnew"
+
+        # --- Создаём S3 клиент ---
+        session = Session()
+        s3_client = session.client(
+            service_name="s3",
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=ENDPOINT_URL,
+            region_name=settings.REGION,
+        )
+
+        # --- Извлекаем object_key ---
+        prefix = f"{ENDPOINT_URL}/{BUCKET_NAME}/"
+        if not transcribation_path.startswith(prefix):
+            print(f"⚠️ Неожиданный формат пути: {transcribation_path}")
+            return
+        object_key = transcribation_path[len(prefix):]
+
+        print(f"[DEBUG] bucket_name={BUCKET_NAME}")
+        print(f"[DEBUG] object_key={object_key}")
+
+        # --- Загружаем текст транскрипции ---
+        response = s3_client.get_object(Bucket=BUCKET_NAME, Key=object_key)
+        interview_text = response["Body"].read().decode("utf-8")
+        print(f"✅ Файл считан ({len(interview_text)} символов)")
+
+        # --- Загружаем и обрабатываем список вопросов ---
+        template = getattr(media_obj, "cast_template", None)
+        if not template or not template.questions:
+            print(f"❌ У MediaTask #{media_task_id} отсутствует шаблон с вопросами")
+            return
+
+        # Универсальный парсинг
+        if isinstance(template.questions, dict):
+            questions_dict = template.questions
+        elif isinstance(template.questions, str):
+            try:
+                questions_dict = json.loads(template.questions)
+            except json.JSONDecodeError:
+                print("⚠️ Ошибка парсинга JSON с вопросами, используем пустой список")
+                questions_dict = {}
+        else:
+            print(f"⚠️ Неожиданный тип поля questions: {type(template.questions)}")
+            questions_dict = {}
+
+        questions_text = "\n".join([f"{qid}. {qtext}" for qid, qtext in questions_dict.items()])
+        print(f"✅ Загружено {len(questions_dict)} вопросов для GPT")
+
+        # --- Формируем system prompt ---
+        system_prompt_start = (
+            "Вы являетесь кастдев-интервьюером и задаете ряд вопросов о вашем продукте "
+            "потенциальному пользователю. Вам нужно найти ответы в данном интервью на список вопросов ниже. "
+            "Если в тексте нет ответа на вопрос — верните 'Нет ответа'. "
+            "Ответ нужно давать буквально прямыми цитатами, как их сказал пользователь, не перефразировать. "
+            "Ответ верните строго в формате JSON (только JSON, без комментариев), где ключ — номер вопроса, а значение — текст ответа.\n\n"
+            "Пример:\n"
+            "{\n"
+            "  \"1\": \"ответ на вопрос 1\",\n"
+            "  \"2\": \"Нет ответа\"\n"
+            "}\n\n"
+            "Вот список вопросов:\n"
+        )
+
+        user_prompt = f"Интервью:\n{interview_text}"
+
+        messages = [
+            {"role": "system", "text": system_prompt_start + questions_text},
+            {"role": "user", "text": user_prompt},
+        ]
+
+        # --- GPT (Yandex Cloud) ---
+        sdk = YCloudML(
+            folder_id=settings.YANDEX_FOLDER_ID,
+            auth=settings.YANDEX_OAUTH_TOKEN,
+        )
+
+        try:
+            tokenized = sdk.models.completions("yandexgpt").tokenize(messages)
+            print(f"🔢 Количество токенов: {len(tokenized)}")
+        except Exception as e:
+            print(f"⚠️ Не удалось подсчитать токены: {e}")
+
+        print("🤖 Отправляем запрос в YandexGPT...")
+        result = sdk.models.completions("yandexgpt").configure(temperature=0.3).run(messages)
+
+        gpt_raw_text = result[0].text if result else "{}"
+        print(f"=== 📝 Ответ GPT ===\n{gpt_raw_text}")
+
+        # --- Очистка и парсинг JSON ---
+        gpt_cleaned_text = gpt_raw_text.strip()
+        if gpt_cleaned_text.startswith("```") and gpt_cleaned_text.endswith("```"):
+            gpt_cleaned_text = gpt_cleaned_text.strip("`").strip()
+
+        try:
+            gpt_json = json.loads(gpt_cleaned_text)
+            print("✅ JSON успешно распознан")
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Ошибка парсинга JSON: {e}")
+            gpt_json = None
+
+        # --- Сохраняем результат ---
+        media_obj.gpt_raw_response = gpt_raw_text
+        media_obj.gpt_result = json.dumps(gpt_json, ensure_ascii=False, indent=2) if gpt_json else None
+        media_obj.status = MediaTaskStatusChoices.SUCCESS
+        media_obj.save(update_fields=["gpt_raw_response", "gpt_result", "status"])
+
+        # --- OutboxEvent ---
+        OutboxEvent.objects.create(
+            media_task=media_obj,
+            event_type=EventTypeChoices.GPT_RESULT_READY,
+            payload={"media_task_id": media_task_id},
+        )
+
+        print("✅ GPT-задача завершена успешно")
+
+    except MediaTask.DoesNotExist:
+        print(f"❌ MediaTask #{media_task_id} не найден")
+
+    except Exception as e:
+        print(f"❌ Ошибка при работе с gpt_task: {e}")
 

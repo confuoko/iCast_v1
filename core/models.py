@@ -108,7 +108,7 @@ class CastTemplate(models.Model):
 class MediaTaskStatusChoices(models.TextChoices):
     LOADED = "loaded", "Загружен"
     PROCESS_TRANSCRIBATION = "process_transcribation", "Транскрибация выполняется"
-    DATA_EXTRACTION = "data_extraction", "Извлечение данных выполняется"
+    PROCESS_DATA_EXTRACTION = "process_data_extraction", "Извлечение данных выполняется"
     SUCCESS = "success", "Успешно завершено"
     FAILED = "failed", "Ошибка"
 
