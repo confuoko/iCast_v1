@@ -16,6 +16,7 @@ from django.views import View
 from django.views.generic import CreateView, TemplateView, ListView, UpdateView
 from django.urls import reverse_lazy
 from django.views.generic.edit import FormMixin
+from openpyxl import load_workbook
 
 from core.models import MediaTask, OutboxEvent, EventTypeChoices, CastTemplate, Project, MediaTaskStatusChoices, \
     IntegrationSettings, UploadChoices
@@ -435,27 +436,76 @@ class CastTemplateCreateView(LoginRequiredMixin, CreateView):
     def form_valid(self, form):
         """
         После сохранения формы — сохраняем файл локально
-        (в будущем будет отправка в S3 и парсинг Excel).
+        и парсим вопросы из Excel.
         """
         template = form.save(commit=False)
         template.integration = self.request.user.integration
 
         uploaded_file = self.request.FILES.get("excel_file")
         if uploaded_file:
-            # Сохраняем файл временно в текущую директорию проекта
+            # === Сохраняем файл локально ===
             file_path = os.path.join(settings.BASE_DIR, uploaded_file.name)
             with open(file_path, "wb+") as destination:
                 for chunk in uploaded_file.chunks():
                     destination.write(chunk)
 
-            # ⚠️ Комментарий:
-            # Позже здесь будет логика обработки Excel-файла
-            # (например, парсинг вопросов и заполнение JSON-поля `questions`)
-
             print(f"📁 Файл сохранён локально: {file_path}")
+
+            # === Парсим Excel ===
+            questions_json = self.parse_excel_questions(file_path)
+            template.questions = questions_json
 
         template.save()
         return super().form_valid(form)
+
+    def parse_excel_questions(self, file_path: str) -> dict:
+        """
+        Парсит Excel-файл и возвращает JSON вида:
+        {
+          "1": "Вопрос типа: ..., цель вопроса: ..., вопрос: ...",
+          ...
+        }
+        """
+        wb = load_workbook(file_path)
+        sheet = wb.active
+
+        # === собираем карту объединённых ячеек ===
+        merged_map = {}
+        for merged_range in sheet.merged_cells.ranges:
+            min_col, min_row, max_col, max_row = merged_range.bounds
+            top_left_value = sheet.cell(row=min_row, column=min_col).value
+            for r in range(min_row, max_row + 1):
+                for c in range(min_col, max_col + 1):
+                    merged_map[(r, c)] = top_left_value
+
+        all_rows = []
+        for row in sheet.iter_rows(min_row=4, min_col=1, max_col=3, values_only=False):
+            values = [
+                (cell.value or merged_map.get((cell.row, cell.column)))
+                for cell in row
+            ]
+            if not any(values):  # пропускаем пустые строки
+                continue
+            all_rows.append(values)
+
+        # === Формируем JSON ===
+        questions_dict = {}
+        for idx, (type_q, goal_q, question_text) in enumerate(all_rows, start=1):
+            type_q = type_q or "(не указан тип)"
+            goal_q = goal_q or "(не указана цель)"
+            question_text = question_text or "(текст вопроса не найден)"
+            text = (
+                f"Вопрос типа: {type_q}, "
+                f"цель вопроса: {goal_q}, "
+                f"вопрос: {question_text}"
+            )
+            questions_dict[str(idx)] = text
+
+        print("✅ Распарсенные вопросы:")
+        for k, v in questions_dict.items():
+            print(f"{k}: {v}")
+
+        return questions_dict
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -471,9 +521,7 @@ class CastTemplateUpdateView(LoginRequiredMixin, UpdateView):
         "title",
         "questions",
         "template_type",
-        "excel_storage_url",
         "promt",
-        "excel_file",
     ]
     success_url = reverse_lazy("my_templates")
 

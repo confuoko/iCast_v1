@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% load core_tags %}
+
 {% block title %}Редактировать шаблон: {{ object.title|default:"Без названия" }}{% endblock %}
 
 {% block content %}
@@ -12,57 +14,33 @@
     <!-- Название -->
     <div class="mb-3">
       <label for="{{ form.title.id_for_label }}" class="form-label">Название шаблона</label>
-      {{ form.title }}
+      {{ form.title|add_class:"form-control" }}
     </div>
 
     <!-- Тип шаблона -->
     <div class="mb-3">
       <label for="{{ form.template_type.id_for_label }}" class="form-label">Тип шаблона</label>
-      {{ form.template_type }}
+      {{ form.template_type|add_class:"form-select" }}
     </div>
 
     <!-- Промт -->
-    <div class="mb-3">
-      <label for="{{ form.promt.id_for_label }}" class="form-label">Промт</label>
-      {{ form.promt }}
-      <div class="form-text">Промт, который используется при обработке шаблона</div>
+    <div class="mb-4">
+      <label for="{{ form.promt.id_for_label }}" class="form-label">🧠 Промт для GPT</label>
+      {{ form.promt|add_class:"form-control" }}
+      <div class="form-text">
+        Укажи, какие выводы нужно сделать, какой формат ответа, тональность и т.д. Пример:
+        <code>"Сформулируй краткий вывод по каждому вопросу от лица клиента"</code>
+      </div>
     </div>
 
-    <!-- Поле для Excel-файла -->
-    <div class="mb-3">
-      <label for="{{ form.excel_file.id_for_label }}" class="form-label">Excel-файл шаблона</label>
-      {{ form.excel_file }}
-      {% if object.excel_file %}
-        <p class="mt-2 small text-muted">
-          📎 Текущий файл:
-          <a href="{{ object.excel_file.url }}" target="_blank">{{ object.excel_file.name }}</a>
-        </p>
-      {% endif %}
-    </div>
-
-    <!-- Поле для JSON с вопросами -->
-    <div class="mb-3">
-      <label for="{{ form.questions.id_for_label }}" class="form-label">JSON с вопросами</label>
-      {{ form.questions }}
-      <div class="form-text">JSON-структура вопросов, извлечённых из Excel</div>
-    </div>
-
-    <!-- Help text -->
-    <div class="mb-3">
-      <label for="{{ form.help_text.id_for_label }}" class="form-label">Описание шаблона</label>
-      {{ form.help_text }}
-    </div>
-
-    <!-- Флаг базового шаблона -->
-    <div class="form-check mb-3">
-      {{ form.default }}
-      <label class="form-check-label" for="{{ form.default.id_for_label }}">Сделать базовым шаблоном</label>
-    </div>
-
-    <!-- Ссылка на файл в хранилище -->
-    <div class="mb-3">
-      <label for="{{ form.excel_storage_url.id_for_label }}" class="form-label">Ссылка на Excel в хранилище</label>
-      {{ form.excel_storage_url }}
+    <!-- JSON с вопросами -->
+    <div class="mb-4">
+      <label for="{{ form.questions.id_for_label }}" class="form-label">📋 Вопросы для интервью (JSON)</label>
+      {{ form.questions|add_class:"form-control" }}
+      <div class="form-text">
+        Ожидается список вопросов в формате JSON:<br>
+        <code>[{"id": 1, "text": "Как вы узнали о нашем продукте?"}, {"id": 2, "text": "Что бы вы улучшили?"}]</code>
+      </div>
     </div>
 
     <!-- Кнопки -->
