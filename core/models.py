@@ -106,6 +106,14 @@ class CastTemplate(models.Model):
         null=True,
         help_text="Описание шаблона."
     )
+    # === Новое поле для Excel-файла ===
+    excel_file = models.FileField(
+        upload_to="uploads/templates/",  # сохраняем в папку внутри MEDIA_ROOT
+        null=True,
+        blank=True,
+        verbose_name="Excel-файл шаблона",
+        help_text="Файл Excel с вопросами (будет обработан автоматически позже)."
+    )
 
     questions = models.JSONField(
         null=True,
@@ -122,6 +130,18 @@ class CastTemplate(models.Model):
         default=False,
         verbose_name="Базовый шаблон"
     )
+    excel_storage_url = models.URLField(
+        verbose_name="Ссылка на Excel-шаблон в хранилище Яндекс",
+        blank=True,
+        null=True
+    )
+    promt = models.TextField(
+        verbose_name="Промт",
+        blank=True,
+        null=True,
+        help_text="Промт"
+    )
+
 
     def __str__(self):
         return f"Шаблон (ID {self.id})"

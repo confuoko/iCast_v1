@@ -62,3 +62,4 @@ xlsxwriter==3.2.9
 yandex-cloud-ml-sdk==0.15.0
 yandexcloud==0.359.0
 mutagen
+openpyxl

@@ -1,14 +1,35 @@
 {% extends "base.html" %}
 
-{% block title %}{{ view.object|default:"Создать" }} шаблон{% endblock %}
+{% block title %}Создать шаблон{% endblock %}
 
 {% block content %}
 <div class="container mt-4">
-  <h2>{{ view.object|default:"Создать" }} шаблон</h2>
+  <h2>Создать шаблон</h2>
 
-  <form method="post">
+  <form method="post" enctype="multipart/form-data">
     {% csrf_token %}
-    {{ form.as_p }}
+
+    <div class="mb-3">
+      {{ form.title.label_tag }}
+      {{ form.title }}
+    </div>
+
+    <div class="mb-3">
+      {{ form.template_type.label_tag }}
+      {{ form.template_type }}
+    </div>
+
+    <div class="mb-3">
+      {{ form.promt.label_tag }}
+      {{ form.promt }}
+    </div>
+
+    <div class="mb-3">
+      {{ form.excel_file.label_tag }}
+      {{ form.excel_file }}
+      <div class="form-text">Загрузите Excel-шаблон с вопросами</div>
+    </div>
+
     <button class="btn btn-primary" type="submit">Сохранить</button>
     <a href="{% url 'my_templates' %}" class="btn btn-secondary">Отмена</a>
   </form>

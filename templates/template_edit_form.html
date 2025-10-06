@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Редактировать шаблон: {{ object.title|default:"Без названия" }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+  <h2 class="mb-4">Редактировать шаблон</h2>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    <!-- Название -->
+    <div class="mb-3">
+      <label for="{{ form.title.id_for_label }}" class="form-label">Название шаблона</label>
+      {{ form.title }}
+    </div>
+
+    <!-- Тип шаблона -->
+    <div class="mb-3">
+      <label for="{{ form.template_type.id_for_label }}" class="form-label">Тип шаблона</label>
+      {{ form.template_type }}
+    </div>
+
+    <!-- Промт -->
+    <div class="mb-3">
+      <label for="{{ form.promt.id_for_label }}" class="form-label">Промт</label>
+      {{ form.promt }}
+      <div class="form-text">Промт, который используется при обработке шаблона</div>
+    </div>
+
+    <!-- Поле для Excel-файла -->
+    <div class="mb-3">
+      <label for="{{ form.excel_file.id_for_label }}" class="form-label">Excel-файл шаблона</label>
+      {{ form.excel_file }}
+      {% if object.excel_file %}
+        <p class="mt-2 small text-muted">
+          📎 Текущий файл:
+          <a href="{{ object.excel_file.url }}" target="_blank">{{ object.excel_file.name }}</a>
+        </p>
+      {% endif %}
+    </div>
+
+    <!-- Поле для JSON с вопросами -->
+    <div class="mb-3">
+      <label for="{{ form.questions.id_for_label }}" class="form-label">JSON с вопросами</label>
+      {{ form.questions }}
+      <div class="form-text">JSON-структура вопросов, извлечённых из Excel</div>
+    </div>
+
+    <!-- Help text -->
+    <div class="mb-3">
+      <label for="{{ form.help_text.id_for_label }}" class="form-label">Описание шаблона</label>
+      {{ form.help_text }}
+    </div>
+
+    <!-- Флаг базового шаблона -->
+    <div class="form-check mb-3">
+      {{ form.default }}
+      <label class="form-check-label" for="{{ form.default.id_for_label }}">Сделать базовым шаблоном</label>
+    </div>
+
+    <!-- Ссылка на файл в хранилище -->
+    <div class="mb-3">
+      <label for="{{ form.excel_storage_url.id_for_label }}" class="form-label">Ссылка на Excel в хранилище</label>
+      {{ form.excel_storage_url }}
+    </div>
+
+    <!-- Кнопки -->
+    <div class="mt-4">
+      <button type="submit" class="btn btn-primary">💾 Сохранить изменения</button>
+      <a href="{% url 'my_templates' %}" class="btn btn-secondary">Отмена</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

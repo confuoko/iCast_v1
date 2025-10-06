@@ -425,31 +425,61 @@ class MyTasksView(LoginRequiredMixin, ListView):
 
 class CastTemplateCreateView(LoginRequiredMixin, CreateView):
     """
-    Создание нового шаблона
+    Создание нового шаблона через загрузку Excel-файла.
     """
     model = CastTemplate
     template_name = "template_form.html"
-    fields = ["questions", "template_type", "title"]
+    fields = ["title", "template_type", "promt", "excel_file"]
     success_url = reverse_lazy("my_templates")
-    
+
+    def form_valid(self, form):
+        """
+        После сохранения формы — сохраняем файл локально
+        (в будущем будет отправка в S3 и парсинг Excel).
+        """
+        template = form.save(commit=False)
+        template.integration = self.request.user.integration
+
+        uploaded_file = self.request.FILES.get("excel_file")
+        if uploaded_file:
+            # Сохраняем файл временно в текущую директорию проекта
+            file_path = os.path.join(settings.BASE_DIR, uploaded_file.name)
+            with open(file_path, "wb+") as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+
+            # ⚠️ Комментарий:
+            # Позже здесь будет логика обработки Excel-файла
+            # (например, парсинг вопросов и заполнение JSON-поля `questions`)
+
+            print(f"📁 Файл сохранён локально: {file_path}")
+
+        template.save()
+        return super().form_valid(form)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['integration'] = self.request.user.integration
+        context["integration"] = self.request.user.integration
         return context
 
 
 class CastTemplateUpdateView(LoginRequiredMixin, UpdateView):
-    """
-    Редактирование существующего шаблона
-    """
     model = CastTemplate
-    template_name = "template_form.html"
-    fields = ["questions", "template_type", "title"]
+    template_name = "template_edit_form.html"  # новый шаблон
+    fields = [
+        "promt_text",
+        "title",
+        "questions",
+        "template_type",
+        "excel_storage_url",
+        "promt",
+        "excel_file",
+    ]
     success_url = reverse_lazy("my_templates")
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['integration'] = self.request.user.integration
+        context["integration"] = self.request.user.integration
         return context
 
 class IntegrationSettingsView(LoginRequiredMixin, UpdateView):
