@@ -10,6 +10,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 import requests
 from django.utils import timezone
+from openpyxl import load_workbook
 from yandex_cloud_ml_sdk import YCloudML
 
 
@@ -484,7 +485,7 @@ def gpt_task(media_task_id):
 
 
 @celery_app.task(queue="processing")
-def save_excel_task(media_task_id):
+def save_excel_task_old(media_task_id):
 
     # === S3 Конфигурация ===
     AWS_ACCESS_KEY_ID = settings.AWS_ACCESS_KEY_ID
@@ -623,3 +624,84 @@ def save_excel_task(media_task_id):
 
     except Exception as e:
         print(f"❌ Общая ошибка: {e}")
+
+@celery_app.task(queue="processing")
+def save_excel_task(media_task_id):
+    try:
+        media_obj = MediaTask.objects.get(id=media_task_id)
+        media_obj.status = MediaTaskStatusChoices.SAVE_EXCEL_START
+        media_obj.save(update_fields=["status"])
+
+        # Проверка данных
+        if not media_obj.cast_template or not media_obj.cast_template.excel_file:
+            print("❌ У задачи нет Excel-файла шаблона")
+            return
+        if not media_obj.gpt_result:
+            print("❌ Нет результата от GPT")
+            return
+
+        try:
+            parsed_json = json.loads(media_obj.gpt_result)
+        except json.JSONDecodeError as e:
+            print(f"❌ Ошибка парсинга gpt_result: {e}")
+            return
+
+        # === Путь к шаблонному файлу Excel ===
+        template_excel_path = media_obj.cast_template.excel_file.path
+
+        # === Открытие Excel и запись ответов в столбец D ===
+        workbook = load_workbook(template_excel_path)
+        sheet = workbook.active
+
+        row = 4  # начинаем с 4 строки
+        for key in sorted(parsed_json.keys(), key=lambda x: int(x)):
+            answer = parsed_json[key]
+            sheet.cell(row=row, column=4).value = answer  # Колонка D = 4
+            row += 1
+
+        # === Сохранение Excel во временный файл ===
+        file_base = media_obj.audio_title_saved or f"media_task_{media_obj.id}"
+        local_excel_path = os.path.join(settings.MEDIA_ROOT, "excel_uploads", f"{file_base}.xlsx")
+        os.makedirs(os.path.dirname(local_excel_path), exist_ok=True)
+        workbook.save(local_excel_path)
+        workbook.close()
+
+        print(f"💾 Обновлённый Excel-файл сохранён: {local_excel_path}")
+
+        # === Загрузка в S3 ===
+        session = boto3.session.Session()
+        s3 = session.client(
+            service_name="s3",
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            endpoint_url=settings.ENDPOINT_URL,
+            region_name=settings.REGION,
+        )
+        object_name = f"excel_uploads/{file_base}.xlsx"
+
+        with open(local_excel_path, "rb") as f:
+            s3.put_object(Bucket=settings.BUCKET_NAME, Key=object_name, Body=f)
+
+        public_url = f"{settings.ENDPOINT_URL}/{settings.BUCKET_NAME}/{object_name}"
+        media_obj.excel_path = public_url
+        media_obj.status = MediaTaskStatusChoices.SAVE_EXCEL_FINISH
+        media_obj.save(update_fields=["excel_path", "status"])
+
+        print(f"✅ Файл загружен в S3: {public_url}")
+
+        # === Событие ===
+        OutboxEvent.objects.create(
+            media_task=media_obj,
+            event_type=EventTypeChoices.EXCEL_FILE_SAVED_TO_YANDEX,
+            payload={
+                "filename": f"{file_base}.xlsx",
+                "storage_url": public_url,
+                "uploaded_by": "system_task",
+            },
+        )
+        print(f"📨 OutboxEvent создан для MediaTask #{media_task_id}")
+
+    except MediaTask.DoesNotExist:
+        print(f"❌ MediaTask #{media_task_id} не найден")
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")

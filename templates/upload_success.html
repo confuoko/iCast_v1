@@ -17,12 +17,13 @@
     <div class="d-flex flex-column gap-3">
       {% for template in cast_templates %}
         <div
-          class="card p-3 bg-success-subtle rounded-3 shadow-sm template-option {% if media_task.cast_template and media_task.cast_template.id == template.id %}selected-template{% endif %}"
-          data-template-id="{{ template.id }}"
-          style="cursor: pointer;"
-        >
-          <strong class="h5 mb-0">{{ template.get_template_type_display }}</strong>
-        </div>
+  class="card p-3 bg-success-subtle rounded-3 shadow-sm template-option {% if media_task.cast_template and media_task.cast_template.id == template.id %}selected-template{% endif %}"
+  data-template-id="{{ template.id }}"
+  style="cursor: pointer;"
+>
+  <strong class="h5 mb-1">{{ template.title|default:"Без названия" }}</strong><br>
+  <small class="text-muted">{{ template.get_template_type_display }}</small>
+</div>
       {% empty %}
         <p class="text-muted">Пока нет доступных шаблонов</p>
       {% endfor %}
