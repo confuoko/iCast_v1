@@ -66,7 +66,6 @@ class VideoUploadForm(forms.Form):
     )
 
 
-
 class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
     model = MediaTask
     template_name = "project_tasks.html"
@@ -233,7 +232,89 @@ class ProjectTaskListView(LoginRequiredMixin, FormMixin, ListView):
             return self.form_invalid(form)
 
 
+# === Форма для загрузки файла ===
+class AudioUploadForm(forms.Form):
+    file = forms.FileField(
+        label="Выберите аудио для загрузки",
+        widget=forms.ClearableFileInput(attrs={
+            "class": "form-control",
+            "accept": "audio/wav"
+        }),
+        help_text="Поддерживаются только WAV-файлы"
+    )
 
+
+# === Основная вьюха для загрузки ===
+class MainUploadsView(LoginRequiredMixin, View):
+    """
+    Отображает личный кабинет пользователя с формой загрузки аудио.
+    При загрузке файла сохраняет его на сервер в new_local_uploads/
+    и создает MediaTask и OutboxEvent.
+    """
+    template_name = "main_uploads.html"
+    form_class = AudioUploadForm
+
+    def get(self, request, *args, **kwargs):
+        """Отображает форму и список уже загруженных пользователем аудио."""
+        form = self.form_class()
+        tasks = MediaTask.objects.filter(integration=request.user.integration).order_by("-audio_local_uploaded_at")
+        return render(request, self.template_name, {"form": form, "tasks": tasks})
+
+    def post(self, request, *args, **kwargs):
+        """Обрабатывает загрузку аудиофайла."""
+        form = self.form_class(request.POST, request.FILES)
+
+        if not form.is_valid():
+            messages.error(request, "Ошибка в форме. Проверьте файл.")
+            return render(request, self.template_name, {"form": form})
+
+        file = form.cleaned_data["file"]
+        original_name = file.name
+        ext = original_name.split(".")[-1].lower()
+
+        # Проверяем расширение
+        if ext != "wav":
+            messages.error(request, f"Неподдерживаемый тип файла: {ext}")
+            return render(request, self.template_name, {"form": form})
+
+        # Создаем директорию new_local_uploads, если её нет
+        upload_dir = os.path.join(settings.BASE_DIR, "new_local_uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+
+        # Генерируем новое имя файла
+        timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+        saved_name = f"{timestamp}_{original_name}"
+        file_path = os.path.join(upload_dir, saved_name)
+
+        # Сохраняем файл на сервер
+        with open(file_path, "wb+") as destination:
+            for chunk in file.chunks():
+                destination.write(chunk)
+
+        # Создаем MediaTask
+        media_task = MediaTask.objects.create(
+            integration=request.user.integration,
+            audio_uploaded_title=original_name,
+            audio_title_saved=saved_name,
+            audio_local_storage=file_path,
+            audio_extension_uploaded=ext,
+            status="loaded"
+        )
+
+        # Создаем OutboxEvent
+        OutboxEvent.objects.create(
+            media_task=media_task,
+            event_type=EventTypeChoices.AUDIO_WAV_UPLOADED,
+            payload={
+                "uploaded_by": request.user.username,
+                "original_name": original_name,
+                "saved_name": saved_name,
+                "path": file_path
+            }
+        )
+
+        messages.success(request, f"Файл {original_name} успешно загружен.")
+        return redirect("main-uploads")
 
 
 

@@ -232,6 +232,12 @@ class MediaTask(models.Model):
         blank=True,
         null=True
     )
+    audio_local_storage = models.CharField(
+        max_length=255,
+        verbose_name="Путь к аудиофайлу на локальном сервере",
+        blank=True,
+        null=True
+    )
     audio_local_uploaded_at = models.DateTimeField(
         auto_now_add=True,
         verbose_name="Время загрузки аудио в Сервис iCast"
